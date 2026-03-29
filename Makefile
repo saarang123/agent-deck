@@ -22,7 +22,9 @@ install: build
 # Install to user's local bin (no sudo required)
 install-user: build
 	mkdir -p $(HOME)/.local/bin
-	cp $(BUILD_DIR)/$(BINARY_NAME) $(HOME)/.local/bin/$(BINARY_NAME)
+	cp $(BUILD_DIR)/$(BINARY_NAME) $(HOME)/.local/bin/$(BINARY_NAME).new
+	codesign --force --sign - $(HOME)/.local/bin/$(BINARY_NAME).new
+	mv -f $(HOME)/.local/bin/$(BINARY_NAME).new $(HOME)/.local/bin/$(BINARY_NAME)
 	@echo "✅ Installed to $(HOME)/.local/bin/$(BINARY_NAME)"
 	@echo "Make sure $(HOME)/.local/bin is in your PATH"
 	@echo "Run 'agent-deck' to start"
