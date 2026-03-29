@@ -84,6 +84,9 @@ FastAPI backend.
 	if doc.Name != "Build" {
 		t.Fatalf("doc name = %q, want Build", doc.Name)
 	}
+	if doc.Category != "skills" {
+		t.Fatalf("doc category = %q, want skills", doc.Category)
+	}
 
 	bundle, err := ResolveKnowledgeBundle(catalog, "onboarding")
 	if err != nil {

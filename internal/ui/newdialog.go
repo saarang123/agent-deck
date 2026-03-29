@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -23,6 +24,7 @@ const (
 	focusName      focusTarget = iota
 	focusPath                  // project path input (hidden when multi-repo enabled).
 	focusCommand               // tool/command picker.
+	focusKnowledge             // knowledge selection list (conditional).
 	focusWorktree              // worktree checkbox.
 	focusSandbox               // sandbox checkbox.
 	focusMultiRepo             // multi-repo toggle (transforms path into list when enabled).
@@ -35,6 +37,12 @@ const (
 type settingDisplay struct {
 	label string
 	value string
+}
+
+type knowledgeCategorySection struct {
+	ID   string
+	Name string
+	Docs []session.KnowledgeDoc
 }
 
 // NewDialog represents the new session creation dialog.
@@ -72,6 +80,11 @@ type NewDialog struct {
 	// Inline validation error displayed inside the dialog.
 	validationErr string
 	pathCycler    session.CompletionCycler // Path autocomplete state.
+	// Knowledge selection.
+	knowledgeCategories []knowledgeCategorySection
+	knowledgeSelected   map[string]bool
+	knowledgeCursor     int
+	knowledgeError      string
 	// Multi-repo mode.
 	multiRepoEnabled    bool
 	multiRepoPaths      []string // All paths when multi-repo is active.
@@ -176,21 +189,22 @@ func NewNewDialog() *NewDialog {
 	branchInput.Width = 40
 
 	dlg := &NewDialog{
-		nameInput:       nameInput,
-		pathInput:       pathInput,
-		commandInput:    commandInput,
-		branchInput:     branchInput,
-		claudeOptions:   NewClaudeOptionsPanel(),
-		geminiOptions:   NewYoloOptionsPanel("Gemini", "YOLO mode - auto-approve all"),
-		codexOptions:    NewYoloOptionsPanel("Codex", "YOLO mode - bypass approvals and sandbox"),
-		focusIndex:      0,
-		visible:         false,
-		presetCommands:  buildPresetCommands(),
-		commandCursor:   0,
-		parentGroupPath: "default",
-		parentGroupName: "default",
-		worktreeEnabled: false,
-		branchPrefix:    "feature/",
+		nameInput:         nameInput,
+		pathInput:         pathInput,
+		commandInput:      commandInput,
+		branchInput:       branchInput,
+		claudeOptions:     NewClaudeOptionsPanel(),
+		geminiOptions:     NewYoloOptionsPanel("Gemini", "YOLO mode - auto-approve all"),
+		codexOptions:      NewYoloOptionsPanel("Codex", "YOLO mode - bypass approvals and sandbox"),
+		focusIndex:        0,
+		visible:           false,
+		presetCommands:    buildPresetCommands(),
+		commandCursor:     0,
+		parentGroupPath:   "default",
+		parentGroupName:   "default",
+		worktreeEnabled:   false,
+		branchPrefix:      "feature/",
+		knowledgeSelected: map[string]bool{},
 	}
 	dlg.updateToolOptions() // Also calls rebuildFocusTargets.
 	return dlg
@@ -225,6 +239,9 @@ func (d *NewDialog) ShowInGroup(groupPath, groupName, defaultPath string) {
 	d.branchInput.SetValue("")
 	d.branchAutoSet = false
 	d.branchPrefix = "feature/" // default; overridden below if config provides one.
+	d.knowledgeSelected = map[string]bool{}
+	d.knowledgeCursor = 0
+	d.knowledgeError = ""
 	// Reset sandbox from global config default.
 	d.sandboxEnabled = false
 	d.inheritedExpanded = false
@@ -250,6 +267,7 @@ func (d *NewDialog) ShowInGroup(groupPath, groupName, defaultPath string) {
 		d.inheritedSettings = buildInheritedSettings(userConfig.Docker)
 		d.branchPrefix = userConfig.Worktree.Prefix()
 	}
+	d.loadKnowledgeCatalog()
 	d.branchInput.Placeholder = d.branchPrefix + "branch-name"
 	d.rebuildFocusTargets()
 }
@@ -520,6 +538,18 @@ func (d *NewDialog) GetValuesWithWorktree() (name, path, command, branch string,
 	return
 }
 
+func (d *NewDialog) GetSelectedKnowledgeRefs() []string {
+	refs := make([]string, 0)
+	for _, category := range d.knowledgeCategories {
+		for _, doc := range category.Docs {
+			if d.knowledgeSelected[doc.ID] {
+				refs = append(refs, doc.ID)
+			}
+		}
+	}
+	return refs
+}
+
 // IsGeminiYoloMode returns whether YOLO mode is enabled for Gemini
 func (d *NewDialog) IsGeminiYoloMode() bool {
 	return d.geminiOptions.GetYoloMode()
@@ -712,6 +742,9 @@ func (d *NewDialog) rebuildFocusTargets() {
 	} else {
 		targets = []focusTarget{focusName, focusMultiRepo, focusPath, focusCommand, focusWorktree, focusSandbox}
 	}
+	if d.knowledgeDocCount() > 0 {
+		targets = append(targets, focusKnowledge)
+	}
 	if d.sandboxEnabled && len(d.inheritedSettings) > 0 {
 		targets = append(targets, focusInherited)
 	}
@@ -773,6 +806,8 @@ func (d *NewDialog) updateFocus() {
 		if d.commandCursor == 0 { // shell.
 			d.commandInput.Focus()
 		}
+	case focusKnowledge:
+		// List focus only.
 	case focusWorktree, focusSandbox, focusInherited:
 		// Checkbox/toggle rows — no text input to focus.
 	case focusBranch:
@@ -955,6 +990,10 @@ func (d *NewDialog) Update(msg tea.Msg) (*NewDialog, tea.Cmd) {
 			}
 
 		case "down":
+			if cur == focusKnowledge && d.knowledgeDocCount() > 0 {
+				d.knowledgeCursor = (d.knowledgeCursor + 1) % d.knowledgeDocCount()
+				return d, nil
+			}
 			if cur == focusMultiRepo && d.multiRepoEnabled && !d.multiRepoEditing {
 				if d.multiRepoPathCursor < len(d.multiRepoPaths)-1 {
 					d.multiRepoPathCursor++
@@ -970,6 +1009,13 @@ func (d *NewDialog) Update(msg tea.Msg) (*NewDialog, tea.Cmd) {
 			return d, nil
 
 		case "shift+tab", "up":
+			if cur == focusKnowledge && d.knowledgeDocCount() > 0 {
+				d.knowledgeCursor--
+				if d.knowledgeCursor < 0 {
+					d.knowledgeCursor = d.knowledgeDocCount() - 1
+				}
+				return d, nil
+			}
 			if cur == focusMultiRepo && d.multiRepoEnabled && !d.multiRepoEditing {
 				if d.multiRepoPathCursor > 0 {
 					d.multiRepoPathCursor--
@@ -1158,6 +1204,10 @@ func (d *NewDialog) Update(msg tea.Msg) (*NewDialog, tea.Cmd) {
 				d.inheritedExpanded = !d.inheritedExpanded
 				return d, nil
 			}
+			if cur == focusKnowledge {
+				d.toggleKnowledgeSelectionAtCursor()
+				return d, nil
+			}
 			if cur == focusOptions && d.toolOptions != nil {
 				return d, d.toolOptions.Update(msg)
 			}
@@ -1197,7 +1247,7 @@ func (d *NewDialog) Update(msg tea.Msg) (*NewDialog, tea.Cmd) {
 				d.filterPathSuggestions()
 			}
 		}
-	case focusWorktree, focusSandbox, focusInherited:
+	case focusKnowledge, focusWorktree, focusSandbox, focusInherited:
 		// Checkbox/toggle rows — no text input to update.
 	case focusBranch:
 		oldBranch := d.branchInput.Value()
@@ -1580,6 +1630,52 @@ func (d *NewDialog) View() string {
 		content.WriteString("\n\n")
 	}
 
+	// Knowledge selection (optional)
+	if d.knowledgeError != "" || d.knowledgeDocCount() > 0 {
+		content.WriteString("\n")
+		if cur == focusKnowledge {
+			content.WriteString(activeLabelStyle.Render("▶ Knowledge:"))
+		} else {
+			content.WriteString(labelStyle.Render("  Knowledge:"))
+		}
+		content.WriteString("\n")
+
+		if d.knowledgeError != "" {
+			dimStyle := lipgloss.NewStyle().Foreground(ColorComment)
+			content.WriteString("  ")
+			content.WriteString(dimStyle.Render(d.knowledgeError))
+			content.WriteString("\n")
+		} else {
+			headerStyle := lipgloss.NewStyle().Foreground(ColorComment).Bold(true)
+			idStyle := lipgloss.NewStyle().Foreground(ColorTextDim)
+			selectedStyle := lipgloss.NewStyle().Foreground(ColorCyan).Bold(true)
+			row := 0
+			for _, category := range d.knowledgeCategories {
+				content.WriteString("  ")
+				content.WriteString(headerStyle.Render(formatKnowledgeCategoryName(category.Name)))
+				content.WriteString("\n")
+				for _, doc := range category.Docs {
+					checkbox := "[ ]"
+					if d.knowledgeSelected[doc.ID] {
+						checkbox = "[x]"
+					}
+					line := fmt.Sprintf("    %s %s", checkbox, doc.Name)
+					if doc.Name != doc.ID {
+						line += " "
+						line += idStyle.Render("[" + doc.ID + "]")
+					}
+					if row == d.knowledgeCursor && cur == focusKnowledge {
+						content.WriteString(selectedStyle.Render("  ▶ " + strings.TrimSpace(line)))
+					} else {
+						content.WriteString("  " + line)
+					}
+					content.WriteString("\n")
+					row++
+				}
+			}
+		}
+	}
+
 	// Worktree checkbox — individually focusable.
 	worktreeLabel := "Create in worktree"
 	if cur == focusCommand {
@@ -1679,6 +1775,8 @@ func (d *NewDialog) View() string {
 		} else {
 			helpText = "←→ command │ w worktree │ s sandbox │ Tab next │ Enter create │ Esc cancel"
 		}
+	} else if cur == focusKnowledge {
+		helpText = "↑↓ choose KB │ Space toggle │ Tab next │ Enter create │ Esc cancel"
 	} else if cur == focusWorktree || cur == focusSandbox {
 		helpText = "Space toggle │ ↑↓ navigate │ Enter create │ Esc cancel"
 	} else if cur == focusInherited {
@@ -1699,4 +1797,119 @@ func (d *NewDialog) View() string {
 		lipgloss.Center,
 		dialog,
 	)
+}
+
+func (d *NewDialog) loadKnowledgeCatalog() {
+	catalog, err := session.LoadKnowledgeCatalog("")
+	if err != nil {
+		d.knowledgeCategories = nil
+		if err == session.ErrKnowledgeRootUnset {
+			d.knowledgeError = ""
+			return
+		}
+		d.knowledgeError = fmt.Sprintf("Knowledge unavailable: %v", err)
+		return
+	}
+
+	grouped := make(map[string][]session.KnowledgeDoc)
+	for _, doc := range session.ListKnowledgeDocs(catalog, "") {
+		if !strings.EqualFold(doc.Status, "active") {
+			continue
+		}
+		category := strings.TrimSpace(doc.Category)
+		if category == "" {
+			category = "other"
+		}
+		grouped[category] = append(grouped[category], doc)
+	}
+
+	categoryIDs := make([]string, 0, len(grouped))
+	for _, categoryID := range catalog.Categories {
+		if len(grouped[categoryID]) > 0 {
+			categoryIDs = append(categoryIDs, categoryID)
+		}
+	}
+	for categoryID := range grouped {
+		found := false
+		for _, existing := range categoryIDs {
+			if existing == categoryID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			categoryIDs = append(categoryIDs, categoryID)
+		}
+	}
+	sort.Strings(categoryIDs)
+
+	sections := make([]knowledgeCategorySection, 0, len(categoryIDs))
+	for _, categoryID := range categoryIDs {
+		docs := grouped[categoryID]
+		if len(docs) == 0 {
+			continue
+		}
+		sections = append(sections, knowledgeCategorySection{
+			ID:   categoryID,
+			Name: categoryID,
+			Docs: docs,
+		})
+	}
+
+	d.knowledgeCategories = sections
+	d.knowledgeError = ""
+	if d.knowledgeCursor >= d.knowledgeDocCount() {
+		d.knowledgeCursor = 0
+	}
+}
+
+func (d *NewDialog) knowledgeDocCount() int {
+	total := 0
+	for _, category := range d.knowledgeCategories {
+		total += len(category.Docs)
+	}
+	return total
+}
+
+func (d *NewDialog) toggleKnowledgeSelectionAtCursor() {
+	doc := d.knowledgeDocAtCursor()
+	if doc == nil {
+		return
+	}
+	if d.knowledgeSelected[doc.ID] {
+		delete(d.knowledgeSelected, doc.ID)
+		return
+	}
+	d.knowledgeSelected[doc.ID] = true
+}
+
+func (d *NewDialog) knowledgeDocAtCursor() *session.KnowledgeDoc {
+	if d.knowledgeCursor < 0 {
+		return nil
+	}
+	index := 0
+	for _, category := range d.knowledgeCategories {
+		for _, doc := range category.Docs {
+			if index == d.knowledgeCursor {
+				docCopy := doc
+				return &docCopy
+			}
+			index++
+		}
+	}
+	return nil
+}
+
+func formatKnowledgeCategoryName(category string) string {
+	category = strings.TrimSpace(category)
+	if category == "" {
+		return "Other"
+	}
+	category = strings.ReplaceAll(category, "_", " ")
+	category = strings.ReplaceAll(category, "-", " ")
+	words := strings.Fields(category)
+	for i, word := range words {
+		words[i] = strings.Title(word)
+	}
+	return strings.Join(words, " ")
 }

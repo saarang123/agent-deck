@@ -42,6 +42,7 @@ type ConfirmDialog struct {
 	pendingSessionCommand   string
 	pendingSessionGroupPath string
 	pendingToolOptionsJSON  json.RawMessage // Generic tool options (claude, codex, etc.)
+	pendingKnowledgeRefs    []string
 }
 
 // NewConfirmDialog creates a new confirmation dialog
@@ -109,6 +110,7 @@ func (c *ConfirmDialog) ShowCreateDirectory(
 	command string,
 	groupPath string,
 	toolOptionsJSON json.RawMessage,
+	knowledgeRefs []string,
 ) {
 	c.visible = true
 	c.confirmType = ConfirmCreateDirectory
@@ -119,6 +121,7 @@ func (c *ConfirmDialog) ShowCreateDirectory(
 	c.pendingSessionCommand = command
 	c.pendingSessionGroupPath = groupPath
 	c.pendingToolOptionsJSON = toolOptionsJSON
+	c.pendingKnowledgeRefs = append([]string(nil), knowledgeRefs...)
 }
 
 // ShowInstallHooks shows confirmation for installing Claude Code hooks
@@ -130,8 +133,17 @@ func (c *ConfirmDialog) ShowInstallHooks() {
 }
 
 // GetPendingSession returns the pending session creation data
-func (c *ConfirmDialog) GetPendingSession() (name, path, command, groupPath string, toolOptionsJSON json.RawMessage) {
-	return c.pendingSessionName, c.pendingSessionPath, c.pendingSessionCommand, c.pendingSessionGroupPath, c.pendingToolOptionsJSON
+func (c *ConfirmDialog) GetPendingSession() (
+	name, path, command, groupPath string,
+	toolOptionsJSON json.RawMessage,
+	knowledgeRefs []string,
+) {
+	return c.pendingSessionName,
+		c.pendingSessionPath,
+		c.pendingSessionCommand,
+		c.pendingSessionGroupPath,
+		c.pendingToolOptionsJSON,
+		append([]string(nil), c.pendingKnowledgeRefs...)
 }
 
 // Hide hides the dialog.
@@ -141,6 +153,7 @@ func (c *ConfirmDialog) Hide() {
 	c.targetName = ""
 	c.sandboxed = false
 	c.remoteName = ""
+	c.pendingKnowledgeRefs = nil
 }
 
 // IsVisible returns whether the dialog is visible

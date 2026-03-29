@@ -37,6 +37,7 @@ var (
 type KnowledgeDoc struct {
 	ID          string   `json:"id"`
 	Name        string   `json:"name"`
+	Category    string   `json:"category,omitempty"`
 	Kind        string   `json:"kind"`
 	FilePath    string   `json:"file_path"`
 	Repos       []string `json:"repos,omitempty"`
@@ -237,7 +238,7 @@ func loadKnowledgeCategory(root, categoryID, configPath string) ([]KnowledgeDoc,
 	docs := make([]KnowledgeDoc, 0, len(cfg.Entries))
 	for _, entry := range cfg.Entries {
 		docFile := filepath.Join(root, categoryID, strings.TrimSpace(toString(entry["file"])))
-		doc, ok := parseKnowledgeDoc(docFile, entry)
+		doc, ok := parseKnowledgeDoc(categoryID, docFile, entry)
 		if ok {
 			docs = append(docs, doc)
 		}
@@ -247,7 +248,7 @@ func loadKnowledgeCategory(root, categoryID, configPath string) ([]KnowledgeDoc,
 	return docs, nil
 }
 
-func parseKnowledgeDoc(filePath string, entry map[string]any) (KnowledgeDoc, bool) {
+func parseKnowledgeDoc(categoryID, filePath string, entry map[string]any) (KnowledgeDoc, bool) {
 	metadata := copyMap(entry)
 	if st, err := os.Stat(filePath); err == nil && !st.IsDir() {
 		if fileMeta, ok := parseKnowledgeMetadata(filePath); ok {
@@ -270,6 +271,7 @@ func parseKnowledgeDoc(filePath string, entry map[string]any) (KnowledgeDoc, boo
 	doc := KnowledgeDoc{
 		ID:          docID,
 		Name:        name,
+		Category:    strings.TrimSpace(categoryID),
 		Kind:        strings.TrimSpace(toString(metadata["kind"])),
 		FilePath:    filepath.Clean(filePath),
 		Repos:       uniqSortedStrings(toStringSlice(metadata["repos"])),

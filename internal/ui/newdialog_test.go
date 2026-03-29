@@ -2,6 +2,7 @@ package ui
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -117,6 +118,74 @@ func TestDialogView(t *testing.T) {
 	}
 	if !strings.Contains(view, "New Session") {
 		t.Error("View should contain 'New Session' title")
+	}
+}
+
+func TestNewDialog_KnowledgeSectionsAndSelection(t *testing.T) {
+	root := t.TempDir()
+	writeDialogTestFile(t, root+"/config.yaml", `
+categories:
+  skills: {}
+  repos: {}
+`)
+	writeDialogTestFile(t, root+"/skills/config.yaml", `
+entries:
+  - id: skill.build
+    file: build.md
+`)
+	writeDialogTestFile(t, root+"/skills/build.md", `-----
+id: skill.build
+name: Build
+kind: skill
+-----
+
+Build docs.
+`)
+	writeDialogTestFile(t, root+"/repos/config.yaml", `
+entries:
+  - id: repo.backend
+    file: backend.md
+`)
+	writeDialogTestFile(t, root+"/repos/backend.md", `-----
+id: repo.backend
+name: Backend
+kind: repo
+-----
+
+Backend docs.
+`)
+	t.Setenv("AGENTDECK_KNOWLEDGE_ROOT", root)
+
+	d := NewNewDialog()
+	d.SetSize(100, 40)
+	d.ShowInGroup("default", "default", t.TempDir())
+
+	if got := d.knowledgeDocCount(); got != 2 {
+		t.Fatalf("knowledgeDocCount = %d, want 2", got)
+	}
+
+	idx := d.indexOf(focusKnowledge)
+	if idx < 0 {
+		t.Fatal("expected knowledge section to be focusable")
+	}
+	d.focusIndex = idx
+	d.updateFocus()
+
+	d, _ = d.Update(tea.KeyMsg{Type: tea.KeySpace})
+	d, _ = d.Update(tea.KeyMsg{Type: tea.KeyDown})
+	d, _ = d.Update(tea.KeyMsg{Type: tea.KeySpace})
+
+	refs := d.GetSelectedKnowledgeRefs()
+	if len(refs) != 2 {
+		t.Fatalf("selected refs = %d, want 2", len(refs))
+	}
+
+	view := d.View()
+	if !strings.Contains(view, "Knowledge:") {
+		t.Fatal("view should include Knowledge section")
+	}
+	if !strings.Contains(view, "Skills") || !strings.Contains(view, "Repos") {
+		t.Fatal("view should group docs by category")
 	}
 }
 
@@ -1281,5 +1350,15 @@ func TestNewDialog_ToggleWorktree_CustomPrefix(t *testing.T) {
 
 	if got := d.branchInput.Value(); got != "dev/cool-feature" {
 		t.Errorf("expected branch %q, got %q", "dev/cool-feature", got)
+	}
+}
+
+func writeDialogTestFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("MkdirAll(%s): %v", path, err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile(%s): %v", path, err)
 	}
 }

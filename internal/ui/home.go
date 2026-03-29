@@ -4276,6 +4276,7 @@ func (h *Home) handleNewDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		name, path, command, branchName, worktreeEnabled := h.newDialog.GetValuesWithWorktree()
 		groupPath := h.newDialog.GetSelectedGroup()
 		claudeOpts := h.newDialog.GetClaudeOptions() // Get Claude options if applicable.
+		knowledgeRefs := h.newDialog.GetSelectedKnowledgeRefs()
 
 		// Resolve worktree target if enabled; actual worktree creation runs in async command.
 		var worktreePath, worktreeRepoRoot string
@@ -4320,7 +4321,7 @@ func (h *Home) handleNewDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if !worktreeEnabled {
 			if _, err := os.Stat(path); os.IsNotExist(err) {
 				h.newDialog.Hide()
-				h.confirmDialog.ShowCreateDirectory(path, name, command, groupPath, toolOptionsJSON)
+				h.confirmDialog.ShowCreateDirectory(path, name, command, groupPath, toolOptionsJSON, knowledgeRefs)
 				return h, nil
 			}
 		}
@@ -4349,6 +4350,7 @@ func (h *Home) handleNewDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			geminiYoloMode,
 			sandboxMode,
 			toolOptionsJSON,
+			knowledgeRefs,
 			multiRepoEnabled,
 			additionalPaths,
 		)
@@ -5561,7 +5563,7 @@ func (h *Home) handleConfirmDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case ConfirmCreateDirectory:
 		switch msg.String() {
 		case "y", "Y":
-			name, path, command, groupPath, pendingToolOpts := h.confirmDialog.GetPendingSession()
+			name, path, command, groupPath, pendingToolOpts, knowledgeRefs := h.confirmDialog.GetPendingSession()
 			h.confirmDialog.Hide()
 			if err := os.MkdirAll(path, 0o755); err != nil {
 				h.setError(fmt.Errorf("failed to create directory: %w", err))
@@ -5578,6 +5580,7 @@ func (h *Home) handleConfirmDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				false,
 				false,
 				pendingToolOpts,
+				knowledgeRefs,
 				false,
 				nil,
 			)
@@ -6275,6 +6278,7 @@ func (h *Home) createSessionInGroupWithWorktreeAndOptions(
 	geminiYoloMode bool,
 	sandboxEnabled bool,
 	toolOptionsJSON json.RawMessage,
+	knowledgeRefs []string,
 	multiRepoEnabled bool,
 	additionalPaths []string,
 ) tea.Cmd {
@@ -6459,6 +6463,18 @@ func (h *Home) createSessionInGroupWithWorktreeAndOptions(
 			}
 		}
 
+		if len(knowledgeRefs) > 0 {
+			catalog, err := session.LoadKnowledgeCatalog("")
+			if err != nil {
+				return sessionCreatedMsg{err: fmt.Errorf("failed to load knowledge catalog: %w", err)}
+			}
+			for _, ref := range knowledgeRefs {
+				if _, err := session.AttachKnowledgeToProject(inst.ProjectPath, catalog, ref, session.KnowledgeAttachmentDoc); err != nil {
+					return sessionCreatedMsg{err: fmt.Errorf("failed to attach knowledge %s: %w", ref, err)}
+				}
+			}
+		}
+
 		uiLog.Info("session_create_starting",
 			slog.String("tool", inst.Tool),
 			slog.String("path", inst.ProjectPath),
@@ -6592,6 +6608,7 @@ func (h *Home) quickCreateSession() tea.Cmd {
 		name, projectPath, command, groupPath,
 		"", "", "", // no worktree
 		geminiYoloMode, false, toolOptionsJSON,
+		nil,
 		false, nil, // no multi-repo
 	)
 }
