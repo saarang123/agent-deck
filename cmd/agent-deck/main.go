@@ -233,6 +233,9 @@ func main() {
 		case "skill":
 			handleSkill(profile, args[1:])
 			return
+		case "knowledge", "kb":
+			handleKnowledge(profile, args[1:])
+			return
 		case "mcp-proxy":
 			if len(args) < 2 {
 				fmt.Fprintln(os.Stderr, "Usage: agent-deck mcp-proxy <socket-path>")
@@ -2281,6 +2284,7 @@ func printHelp() {
 	fmt.Println("  session          Manage session lifecycle")
 	fmt.Println("  mcp              Manage MCP servers")
 	fmt.Println("  skill            Manage Claude skills")
+	fmt.Println("  knowledge, kb    Manage local knowledge bundles and attachments")
 	fmt.Println("  codex-hooks      Manage Codex notify hook integration")
 	fmt.Println("  gemini-hooks     Manage Gemini hook integration")
 	fmt.Println("  group            Manage groups")
@@ -2314,6 +2318,13 @@ func printHelp() {
 	fmt.Println("  skill attach <id> <name>  Attach skill to session project")
 	fmt.Println("  skill detach <id> <name>  Detach skill from session project")
 	fmt.Println("  skill source list         List global skill sources")
+	fmt.Println()
+	fmt.Println("Knowledge Commands:")
+	fmt.Println("  knowledge list            List knowledge docs from KB root")
+	fmt.Println("  knowledge search <query>  Search knowledge docs")
+	fmt.Println("  knowledge attached [id]   Show knowledge attached to a session")
+	fmt.Println("  knowledge attach <id> <r> Attach doc/bundle to session project")
+	fmt.Println("  knowledge detach <id> <r> Detach doc/bundle from session project")
 	fmt.Println()
 	fmt.Println("Codex Hook Commands:")
 	fmt.Println("  codex-hooks install       Install or upgrade Codex notify hook")

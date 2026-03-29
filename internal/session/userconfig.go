@@ -126,6 +126,16 @@ type UserConfig struct {
 
 	// Costs defines cost tracking and budget settings
 	Costs CostsSettings `toml:"costs"`
+
+	// Knowledge defines local knowledge-base discovery settings
+	Knowledge KnowledgeSettings `toml:"knowledge"`
+}
+
+// KnowledgeSettings defines local knowledge-base settings.
+type KnowledgeSettings struct {
+	// Root is the path to an external knowledge base root containing config.yaml.
+	// Supports ~ expansion. Can also be overridden with AGENTDECK_KNOWLEDGE_ROOT.
+	Root string `toml:"root"`
 }
 
 // OpenClawSettings configures the OpenClaw gateway connection.
