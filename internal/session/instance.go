@@ -69,6 +69,7 @@ type Instance struct {
 	ID                string `json:"id"`
 	Title             string `json:"title"`
 	ProjectPath       string `json:"project_path"`
+	SessionHome       string `json:"session_home,omitempty"`
 	GroupPath         string `json:"group_path"`                    // e.g., "projects/devops"
 	Order             int    `json:"order"`                         // Position within group (for reorder persistence)
 	ParentSessionID   string `json:"parent_session_id,omitempty"`   // Links to parent session (makes this a sub-session)
@@ -245,10 +246,13 @@ func (inst *Instance) AllProjectPaths() []string {
 }
 
 // EffectiveWorkingDir returns the working directory for this session.
-// For multi-repo sessions, this is the temp dir; otherwise the ProjectPath.
+// Priority: multi-repo temp dir, managed session home, then ProjectPath.
 func (inst *Instance) EffectiveWorkingDir() string {
 	if inst.MultiRepoEnabled && inst.MultiRepoTempDir != "" {
 		return inst.MultiRepoTempDir
+	}
+	if inst.SessionHome != "" {
+		return inst.SessionHome
 	}
 	return inst.ProjectPath
 }
@@ -525,7 +529,7 @@ func (i *Instance) buildClaudeCommandWithMessage(baseCommand, message string) st
 			// Resume specific session by ID
 			if opts.ResumeSessionID != "" {
 				// Check if session has actual conversation data
-				if sessionHasConversationData(opts.ResumeSessionID, i.ProjectPath) {
+				if sessionHasConversationData(opts.ResumeSessionID, i.ProviderProjectPath()) {
 					// Session has conversation history - use normal --resume
 					return fmt.Sprintf(`%s%s --resume %s%s`,
 						configDirPrefix, claudeCmd, opts.ResumeSessionID, extraFlags)
@@ -604,19 +608,28 @@ func (i *Instance) buildBashExportPrefix() string {
 // Also handles instance-level flags like --add-dir for subagent access
 func (i *Instance) buildClaudeExtraFlags(opts *ClaudeOptions) string {
 	var flags []string
+	seen := make(map[string]bool)
 
 	// Instance-level flags (not from ClaudeOptions)
 	// --add-dir: Grant subagent access to parent's project directory (for worktrees, etc.)
 	if i.ParentProjectPath != "" {
 		flags = append(flags, fmt.Sprintf("--add-dir %s", i.ParentProjectPath))
+		seen[resolveRealPath(i.ParentProjectPath)] = true
+	}
+
+	// Managed session homes launch outside the repo tree, so explicitly grant access
+	// to the repo path when the cwd differs from ProjectPath.
+	if i.SessionHome != "" && i.ProjectPath != "" {
+		projectReal := resolveRealPath(i.ProjectPath)
+		cwdReal := resolveRealPath(i.EffectiveWorkingDir())
+		if projectReal != "" && projectReal != cwdReal && !seen[projectReal] {
+			flags = append(flags, fmt.Sprintf("--add-dir %s", i.ProjectPath))
+			seen[projectReal] = true
+		}
 	}
 
 	// Multi-repo: pass all project paths via --add-dir (deduplicated, excluding cwd)
 	if i.MultiRepoEnabled {
-		seen := make(map[string]bool)
-		if i.ParentProjectPath != "" {
-			seen[resolveRealPath(i.ParentProjectPath)] = true // already added above
-		}
 		seen[resolveRealPath(i.EffectiveWorkingDir())] = true // exclude cwd
 		for _, p := range i.AllProjectPaths() {
 			real := resolveRealPath(p)
@@ -927,9 +940,9 @@ func (i *Instance) setOpenCodeSession(sessionID string) {
 func (i *Instance) queryOpenCodeSession() string {
 	// Run: opencode session list --format json
 	cmd := exec.Command("opencode", "session", "list", "--format", "json")
-	cmd.Dir = i.ProjectPath
+	cmd.Dir = i.ProviderProjectPath()
 
-	sessionLog.Debug("opencode_query_sessions", slog.String("dir", i.ProjectPath))
+	sessionLog.Debug("opencode_query_sessions", slog.String("dir", i.ProviderProjectPath()))
 
 	output, err := cmd.Output()
 	if err != nil {
@@ -959,7 +972,7 @@ func (i *Instance) queryOpenCodeSession() string {
 	// Find the most recently updated session matching our project path
 	// OpenCode auto-resumes the most recent session when you run `opencode` in a directory,
 	// so we track that same session (no startTime check needed)
-	projectPath := i.ProjectPath
+	projectPath := i.ProviderProjectPath()
 
 	var bestMatch string
 	var bestMatchTime int64
@@ -1111,7 +1124,7 @@ func (i *Instance) queryCodexSession(excludeIDs map[string]bool, allowUnscoped b
 	var bestUnscopedID string
 	var bestUnscopedTime time.Time
 
-	normalizedProjectPath := normalizePath(i.ProjectPath)
+	normalizedProjectPath := normalizePath(i.ProviderProjectPath())
 
 	err := filepath.WalkDir(sessionsDir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -1843,6 +1856,9 @@ func (i *Instance) Start() error {
 	if i.tmuxSession == nil {
 		return fmt.Errorf("tmux session not initialized")
 	}
+	if err := RefreshManagedSessionFiles(i, nil); err != nil {
+		return err
+	}
 
 	// Build command based on tool type
 	// Priority: claude-compatible (built-in + custom wrapping claude) → built-in tools → custom tools → raw command
@@ -1960,6 +1976,9 @@ func (i *Instance) Start() error {
 func (i *Instance) StartWithMessage(message string) error {
 	if i.tmuxSession == nil {
 		return fmt.Errorf("tmux session not initialized")
+	}
+	if err := RefreshManagedSessionFiles(i, nil); err != nil {
+		return err
 	}
 
 	// Start session normally (no embedded message logic)
@@ -2486,8 +2505,8 @@ func (i *Instance) UpdateClaudeSession(excludeIDs map[string]bool) {
 		if i.ClaudeSessionID != sessionID {
 			// Quality gate: don't adopt a zombie ID from tmux env when current has real data
 			if i.ClaudeSessionID != "" {
-				currentHasData := sessionHasConversationData(i.ClaudeSessionID, i.ProjectPath)
-				candidateHasData := sessionHasConversationData(sessionID, i.ProjectPath)
+				currentHasData := sessionHasConversationData(i.ClaudeSessionID, i.ProviderProjectPath())
+				candidateHasData := sessionHasConversationData(sessionID, i.ProviderProjectPath())
 				if currentHasData && !candidateHasData {
 					sessionLog.Debug("claude_session_tmux_rejected_zombie",
 						slog.String("current_id", i.ClaudeSessionID),
@@ -2557,7 +2576,7 @@ func (i *Instance) syncClaudeSessionFromDisk() {
 	configDir := GetClaudeConfigDir()
 	exclude := i.collectOtherClaudeSessionIDs()
 
-	activeID := findActiveSessionIDExcluding(configDir, i.ProjectPath, exclude)
+	activeID := findActiveSessionIDExcluding(configDir, i.ProviderProjectPath(), exclude)
 	if activeID == "" || activeID == i.ClaudeSessionID {
 		return
 	}
@@ -2565,8 +2584,8 @@ func (i *Instance) syncClaudeSessionFromDisk() {
 	// Quality gate: don't replace a session with real conversation data with a zombie
 	// (a zombie is a session file with no conversation data, typically from a crashed startup)
 	if i.ClaudeSessionID != "" {
-		currentHasData := sessionHasConversationData(i.ClaudeSessionID, i.ProjectPath)
-		candidateHasData := sessionHasConversationData(activeID, i.ProjectPath)
+		currentHasData := sessionHasConversationData(i.ClaudeSessionID, i.ProviderProjectPath())
+		candidateHasData := sessionHasConversationData(activeID, i.ProviderProjectPath())
 
 		// Decision matrix:
 		//   current=real, candidate=real   → ACCEPT (handles /clear: both real, newer wins)
@@ -2630,7 +2649,7 @@ func (i *Instance) UpdateHookStatus(status *HookStatus) {
 		}
 		// Quality gate: only accept if the hook session has conversation data,
 		// OR if the current session ID is empty (first detection).
-		if i.ClaudeSessionID == "" || sessionHasConversationData(sessionID, i.ProjectPath) {
+		if i.ClaudeSessionID == "" || sessionHasConversationData(sessionID, i.ProviderProjectPath()) {
 			sessionLog.Debug("claude_session_update_from_hook",
 				slog.String("old_id", i.ClaudeSessionID),
 				slog.String("new_id", sessionID),
@@ -2666,7 +2685,7 @@ func (i *Instance) UpdateHookStatus(status *HookStatus) {
 		}
 		// Quality gate: only accept when candidate session appears valid on disk,
 		// OR when current session is empty (first detection/bootstrap).
-		if i.GeminiSessionID == "" || geminiSessionHasConversationData(sessionID, i.ProjectPath) {
+		if i.GeminiSessionID == "" || geminiSessionHasConversationData(sessionID, i.ProviderProjectPath()) {
 			sessionLog.Debug("gemini_session_update_from_hook",
 				slog.String("old_id", i.GeminiSessionID),
 				slog.String("new_id", sessionID),
@@ -2770,7 +2789,7 @@ func (i *Instance) syncGeminiSessionFromTmux() {
 // syncGeminiSessionFromDisk scans the filesystem for the most recent session.
 // Krudony fix: user may have started a NEW session, so always scan rather than using stale cached ID.
 func (i *Instance) syncGeminiSessionFromDisk() {
-	sessions, err := ListGeminiSessions(i.ProjectPath)
+	sessions, err := ListGeminiSessions(i.ProviderProjectPath())
 	if err != nil || len(sessions) == 0 {
 		return
 	}
@@ -2803,7 +2822,7 @@ func (i *Instance) updateGeminiAnalytics() {
 		i.GeminiAnalytics = &GeminiSessionAnalytics{}
 	}
 	// Non-blocking update (ignore errors, best effort)
-	_ = UpdateGeminiAnalyticsFromDisk(i.ProjectPath, i.GeminiSessionID, i.GeminiAnalytics)
+	_ = UpdateGeminiAnalyticsFromDisk(i.ProviderProjectPath(), i.GeminiSessionID, i.GeminiAnalytics)
 
 	// Sync detected model from analytics to instance (if not explicitly set by user)
 	if i.GeminiModel == "" && i.GeminiAnalytics.Model != "" {
@@ -2818,7 +2837,7 @@ func (i *Instance) updateGeminiLatestPrompt() {
 		return
 	}
 
-	sessionsDir := GetGeminiSessionsDir(i.ProjectPath)
+	sessionsDir := GetGeminiSessionsDir(i.ProviderProjectPath())
 	pattern := filepath.Join(sessionsDir, "session-*-"+i.GeminiSessionID[:8]+".json")
 	filePath, fileMtime := findNewestFile(pattern)
 
@@ -3132,8 +3151,9 @@ func (i *Instance) GetJSONLPath() string {
 	configDir := GetClaudeConfigDir()
 
 	// Resolve symlinks in project path (macOS: /tmp -> /private/tmp)
-	resolvedPath := i.ProjectPath
-	if resolved, err := filepath.EvalSymlinks(i.ProjectPath); err == nil {
+	scopePath := i.ProviderProjectPath()
+	resolvedPath := scopePath
+	if resolved, err := filepath.EvalSymlinks(scopePath); err == nil {
 		resolvedPath = resolved
 	}
 
@@ -3164,8 +3184,9 @@ func (i *Instance) getClaudeLastResponse() (*ResponseOutput, error) {
 	configDir := GetClaudeConfigDir()
 
 	// Resolve symlinks in project path (macOS: /tmp -> /private/tmp)
-	resolvedPath := i.ProjectPath
-	if resolved, err := filepath.EvalSymlinks(i.ProjectPath); err == nil {
+	scopePath := i.ProviderProjectPath()
+	resolvedPath := scopePath
+	if resolved, err := filepath.EvalSymlinks(scopePath); err == nil {
 		resolvedPath = resolved
 	}
 
@@ -3462,7 +3483,7 @@ func (i *Instance) getGeminiLastResponse() (*ResponseOutput, error) {
 		return nil, fmt.Errorf("no Gemini session ID available for this instance")
 	}
 
-	sessionsDir := GetGeminiSessionsDir(i.ProjectPath)
+	sessionsDir := GetGeminiSessionsDir(i.ProviderProjectPath())
 
 	// Find file by session ID (first 8 chars in filename)
 	// Filename format is session-YYYY-MM-DDTHH-MM-<uuid8>.json
@@ -3712,6 +3733,9 @@ func (i *Instance) Restart() error {
 		slog.Bool("tmux_session", i.tmuxSession != nil),
 		slog.Bool("tmux_exists", i.tmuxSession != nil && i.tmuxSession.Exists()),
 	)
+	if err := RefreshManagedSessionFiles(i, nil); err != nil {
+		return err
+	}
 
 	// Clear flag immediately to prevent it staying set if restart fails
 	skipRegen := i.SkipMCPRegenerate
@@ -3952,7 +3976,10 @@ func (i *Instance) Restart() error {
 	}
 
 	// Fallback: recreate tmux session (for dead sessions or unknown ID)
-	i.tmuxSession = tmux.NewSession(i.Title, i.ProjectPath)
+	if err := RefreshManagedSessionFiles(i, nil); err != nil {
+		return err
+	}
+	i.tmuxSession = tmux.NewSession(i.Title, i.EffectiveWorkingDir())
 	i.tmuxSession.InstanceID = i.ID // Pass instance ID for activity hooks
 	i.tmuxSession.SetInjectStatusLine(GetTmuxSettings().GetInjectStatusLine())
 
@@ -4084,11 +4111,11 @@ func (i *Instance) buildClaudeResumeCommand() string {
 
 	// Check if session has actual conversation data
 	// If not, use --session-id instead of --resume to avoid "No conversation found" error
-	useResume := sessionHasConversationData(i.ClaudeSessionID, i.ProjectPath)
+	useResume := sessionHasConversationData(i.ClaudeSessionID, i.ProviderProjectPath())
 	sessionLog.Debug(
 		"session_data_build_resume",
 		slog.String("session_id", i.ClaudeSessionID),
-		slog.String("path", i.ProjectPath),
+		slog.String("path", i.ProviderProjectPath()),
 		slog.Bool("use_resume", useResume),
 	)
 
@@ -4219,6 +4246,9 @@ func (i *Instance) ForkWithOptions(newTitle, newGroupPath string, opts *ClaudeOp
 		projectPath = opts.WorkDir
 	}
 	target := NewInstance(newTitle, projectPath)
+	if err := target.EnsureManagedSessionHome(); err != nil {
+		return "", err
+	}
 	if newGroupPath != "" {
 		target.GroupPath = newGroupPath
 	} else {
@@ -4241,7 +4271,7 @@ func (i *Instance) buildClaudeForkCommandForTarget(target *Instance, opts *Claud
 		return "", fmt.Errorf("cannot fork: no active Claude session")
 	}
 
-	workDir := target.ProjectPath
+	workDir := target.EffectiveWorkingDir()
 
 	// IMPORTANT: For capture-resume commands (which contain $(...) syntax), we MUST use
 	// "claude" binary + explicit env exports, NOT a custom command alias like "cdw".
@@ -4255,8 +4285,9 @@ func (i *Instance) buildClaudeForkCommandForTarget(target *Instance, opts *Claud
 		opts = NewClaudeOptions(userConfig)
 	}
 
-	// Build extra flags from options (for fork, we use ToArgsForFork which excludes session mode)
-	extraFlags := i.buildClaudeExtraFlags(opts)
+	// Build extra flags from options (for fork, we use ToArgsForFork which excludes session mode).
+	// Use the target instance here because permissions and cwd are scoped to the fork.
+	extraFlags := target.buildClaudeExtraFlags(opts)
 
 	// Pre-generate UUID for forked session to avoid shell uuidgen dependency.
 	// CLAUDE_SESSION_ID is propagated via host-side SetEnvironment after tmux start.
@@ -4285,7 +4316,7 @@ func (i *Instance) GetActualWorkDir() string {
 			return workDir
 		}
 	}
-	return i.ProjectPath
+	return i.EffectiveWorkingDir()
 }
 
 // CreateForkedInstance creates a new Instance configured for forking
@@ -4305,6 +4336,9 @@ func (i *Instance) CreateForkedInstanceWithOptions(
 		projectPath = opts.WorkDir
 	}
 	forked := NewInstance(newTitle, projectPath)
+	if err := forked.EnsureManagedSessionHome(); err != nil {
+		return nil, "", err
+	}
 	if newGroupPath != "" {
 		forked.GroupPath = newGroupPath
 	} else {
@@ -4351,7 +4385,7 @@ func (i *Instance) ForkOpenCodeWithOptions(newTitle, newGroupPath string, opts *
 		return "", fmt.Errorf("cannot fork: no active OpenCode session")
 	}
 
-	workDir := i.ProjectPath
+	workDir := i.ProviderProjectPath()
 	envPrefix := i.buildEnvSourceCommand()
 
 	// Build extra flags from options (for fork, exclude session mode flags)
@@ -4443,6 +4477,9 @@ func (i *Instance) CreateForkedOpenCodeInstanceWithOptions(
 	}
 
 	forked := NewInstance(newTitle, i.ProjectPath)
+	if err := forked.EnsureManagedSessionHome(); err != nil {
+		return nil, "", err
+	}
 	if newGroupPath != "" {
 		forked.GroupPath = newGroupPath
 	} else {

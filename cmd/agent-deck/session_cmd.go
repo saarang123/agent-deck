@@ -716,6 +716,7 @@ func handleSessionShow(profile string, args []string) {
 		"profile":             profile,
 		"status":              StatusString(inst.Status),
 		"path":                inst.ProjectPath,
+		"session_home":        inst.SessionHome,
 		"group":               inst.GroupPath,
 		"parent_session_id":   inst.ParentSessionID,
 		"parent_project_path": inst.ParentProjectPath,
@@ -752,6 +753,9 @@ func handleSessionShow(profile string, args []string) {
 	sb.WriteString(fmt.Sprintf("ID:      %s\n", inst.ID))
 	sb.WriteString(fmt.Sprintf("Status:  %s %s\n", StatusSymbol(inst.Status), StatusString(inst.Status)))
 	sb.WriteString(fmt.Sprintf("Path:    %s\n", FormatPath(inst.ProjectPath)))
+	if inst.SessionHome != "" {
+		sb.WriteString(fmt.Sprintf("Home:    %s\n", FormatPath(inst.SessionHome)))
+	}
 
 	if inst.GroupPath != "" {
 		sb.WriteString(fmt.Sprintf("Group:   %s\n", inst.GroupPath))
@@ -1892,11 +1896,12 @@ func handleSessionCurrent(profileArg string, args []string) {
 
 	// Prepare JSON output
 	jsonData := map[string]interface{}{
-		"session": instData.Title,
-		"profile": detectedProfile,
-		"id":      instData.ID,
-		"path":    instData.ProjectPath,
-		"status":  status,
+		"session":      instData.Title,
+		"profile":      detectedProfile,
+		"id":           instData.ID,
+		"path":         instData.ProjectPath,
+		"session_home": instData.SessionHome,
+		"status":       status,
 	}
 
 	if instData.GroupPath != "" {
@@ -1910,6 +1915,9 @@ func handleSessionCurrent(profileArg string, args []string) {
 	sb.WriteString(fmt.Sprintf("ID:      %s\n", instData.ID))
 	sb.WriteString(fmt.Sprintf("Status:  %s %s\n", StatusSymbol(instData.Status), status))
 	sb.WriteString(fmt.Sprintf("Path:    %s\n", FormatPath(instData.ProjectPath)))
+	if instData.SessionHome != "" {
+		sb.WriteString(fmt.Sprintf("Home:    %s\n", FormatPath(instData.SessionHome)))
+	}
 	if instData.GroupPath != "" {
 		sb.WriteString(fmt.Sprintf("Group:   %s\n", instData.GroupPath))
 	}

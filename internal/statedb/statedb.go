@@ -18,7 +18,7 @@ import (
 
 // SchemaVersion tracks the current database schema version.
 // Bump this when adding migrations.
-const SchemaVersion = 3
+const SchemaVersion = 4
 
 // StateDB wraps a SQLite database for session/group persistence.
 // Thread-safe for concurrent use from multiple goroutines within one process.
@@ -33,6 +33,7 @@ type InstanceRow struct {
 	ID              string
 	Title           string
 	ProjectPath     string
+	SessionHome     string
 	GroupPath       string
 	Order           int
 	Command         string
@@ -169,6 +170,7 @@ func (s *StateDB) Migrate() error {
 			id              TEXT PRIMARY KEY,
 			title           TEXT NOT NULL,
 			project_path    TEXT NOT NULL,
+			session_home    TEXT NOT NULL DEFAULT '',
 			group_path      TEXT NOT NULL DEFAULT 'my-sessions',
 			sort_order      INTEGER NOT NULL DEFAULT 0,
 			command         TEXT NOT NULL DEFAULT '',
@@ -187,6 +189,9 @@ func (s *StateDB) Migrate() error {
 		)
 	`); err != nil {
 		return fmt.Errorf("statedb: create instances: %w", err)
+	}
+	if _, err := tx.Exec(`ALTER TABLE instances ADD COLUMN session_home TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+		return fmt.Errorf("statedb: add session_home column: %w", err)
 	}
 
 	// groups table
@@ -304,14 +309,14 @@ func (s *StateDB) SaveInstance(inst *InstanceRow) error {
 
 	_, err := s.db.Exec(`
 		INSERT OR REPLACE INTO instances (
-			id, title, project_path, group_path, sort_order,
+			id, title, project_path, session_home, group_path, sort_order,
 			command, wrapper, tool, status, tmux_session,
 			created_at, last_accessed,
 			parent_session_id, worktree_path, worktree_repo, worktree_branch,
 			tool_data
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
-		inst.ID, inst.Title, inst.ProjectPath, inst.GroupPath, inst.Order,
+		inst.ID, inst.Title, inst.ProjectPath, inst.SessionHome, inst.GroupPath, inst.Order,
 		inst.Command, inst.Wrapper, inst.Tool, inst.Status, inst.TmuxSession,
 		inst.CreatedAt.Unix(), inst.LastAccessed.Unix(),
 		inst.ParentSessionID, inst.WorktreePath, inst.WorktreeRepo, inst.WorktreeBranch,
@@ -350,12 +355,12 @@ func (s *StateDB) SaveInstances(insts []*InstanceRow) error {
 
 	stmt, err := tx.Prepare(`
 		INSERT OR REPLACE INTO instances (
-			id, title, project_path, group_path, sort_order,
+			id, title, project_path, session_home, group_path, sort_order,
 			command, wrapper, tool, status, tmux_session,
 			created_at, last_accessed,
 			parent_session_id, worktree_path, worktree_repo, worktree_branch,
 			tool_data
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return err
@@ -368,7 +373,7 @@ func (s *StateDB) SaveInstances(insts []*InstanceRow) error {
 			toolData = json.RawMessage("{}")
 		}
 		if _, err := stmt.Exec(
-			inst.ID, inst.Title, inst.ProjectPath, inst.GroupPath, inst.Order,
+			inst.ID, inst.Title, inst.ProjectPath, inst.SessionHome, inst.GroupPath, inst.Order,
 			inst.Command, inst.Wrapper, inst.Tool, inst.Status, inst.TmuxSession,
 			inst.CreatedAt.Unix(), inst.LastAccessed.Unix(),
 			inst.ParentSessionID, inst.WorktreePath, inst.WorktreeRepo, inst.WorktreeBranch,
@@ -384,7 +389,7 @@ func (s *StateDB) SaveInstances(insts []*InstanceRow) error {
 // LoadInstances returns all instances ordered by sort_order.
 func (s *StateDB) LoadInstances() ([]*InstanceRow, error) {
 	rows, err := s.db.Query(`
-		SELECT id, title, project_path, group_path, sort_order,
+		SELECT id, title, project_path, session_home, group_path, sort_order,
 			command, wrapper, tool, status, tmux_session,
 			created_at, last_accessed,
 			parent_session_id, worktree_path, worktree_repo, worktree_branch,
@@ -402,7 +407,7 @@ func (s *StateDB) LoadInstances() ([]*InstanceRow, error) {
 		var createdUnix, accessedUnix int64
 		var toolDataStr string
 		if err := rows.Scan(
-			&r.ID, &r.Title, &r.ProjectPath, &r.GroupPath, &r.Order,
+			&r.ID, &r.Title, &r.ProjectPath, &r.SessionHome, &r.GroupPath, &r.Order,
 			&r.Command, &r.Wrapper, &r.Tool, &r.Status, &r.TmuxSession,
 			&createdUnix, &accessedUnix,
 			&r.ParentSessionID, &r.WorktreePath, &r.WorktreeRepo, &r.WorktreeBranch,

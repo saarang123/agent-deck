@@ -405,7 +405,8 @@ func handleKnowledgeAttached(profile string, args []string) {
 		os.Exit(2)
 	}
 
-	attachments, err := session.GetAttachedProjectKnowledge(inst.ProjectPath)
+	metadataRoot := inst.EffectiveMetadataRoot()
+	attachments, err := session.GetAttachedProjectKnowledge(metadataRoot)
 	if err != nil {
 		out.Error(fmt.Sprintf("failed to load attached knowledge: %v", err), ErrCodeInvalidOperation)
 		os.Exit(1)
@@ -422,7 +423,8 @@ func handleKnowledgeAttached(profile string, args []string) {
 			"session":        inst.Title,
 			"session_id":     inst.ID,
 			"project_path":   inst.ProjectPath,
-			"manifest_path":  session.GetProjectKnowledgeManifestPath(inst.ProjectPath),
+			"session_home":   inst.SessionHome,
+			"manifest_path":  session.GetProjectKnowledgeManifestPath(metadataRoot),
 			"attachments":    attachments,
 			"effective_docs": effectiveDocs,
 		})
@@ -437,7 +439,10 @@ func handleKnowledgeAttached(profile string, args []string) {
 
 	fmt.Printf("Session: %s\n", inst.Title)
 	fmt.Printf("Project: %s\n", FormatPath(inst.ProjectPath))
-	fmt.Printf("Manifest: %s\n\n", FormatPath(session.GetProjectKnowledgeManifestPath(inst.ProjectPath)))
+	if inst.SessionHome != "" {
+		fmt.Printf("Home: %s\n", FormatPath(inst.SessionHome))
+	}
+	fmt.Printf("Manifest: %s\n\n", FormatPath(session.GetProjectKnowledgeManifestPath(metadataRoot)))
 
 	if len(attachments) == 0 {
 		fmt.Println("No knowledge attached to this project.")
@@ -492,9 +497,14 @@ func handleKnowledgeAttach(profile string, args []string) {
 		os.Exit(2)
 	}
 
-	attachment, err := session.AttachKnowledgeToProject(inst.ProjectPath, catalog, fs.Arg(1), *kind)
+	metadataRoot := inst.EffectiveMetadataRoot()
+	attachment, err := session.AttachKnowledgeToProject(metadataRoot, catalog, fs.Arg(1), *kind)
 	if err != nil {
 		out.Error(err.Error(), ErrCodeInvalidOperation)
+		os.Exit(1)
+	}
+	if err := session.RefreshManagedSessionFiles(inst, catalog); err != nil {
+		out.Error(fmt.Sprintf("attached knowledge but failed to refresh session context: %v", err), ErrCodeInvalidOperation)
 		os.Exit(1)
 	}
 
@@ -505,6 +515,7 @@ func handleKnowledgeAttach(profile string, args []string) {
 			"session_id":   inst.ID,
 			"session":      inst.Title,
 			"project_path": inst.ProjectPath,
+			"session_home": inst.SessionHome,
 			"attachment":   attachment,
 		},
 	)
@@ -543,9 +554,14 @@ func handleKnowledgeDetach(profile string, args []string) {
 	if loaded, err := session.LoadKnowledgeCatalog(*root); err == nil {
 		catalog = loaded
 	}
-	attachment, err := session.DetachKnowledgeFromProject(inst.ProjectPath, catalog, fs.Arg(1), *kind)
+	metadataRoot := inst.EffectiveMetadataRoot()
+	attachment, err := session.DetachKnowledgeFromProject(metadataRoot, catalog, fs.Arg(1), *kind)
 	if err != nil {
 		out.Error(err.Error(), ErrCodeInvalidOperation)
+		os.Exit(1)
+	}
+	if err := session.RefreshManagedSessionFiles(inst, catalog); err != nil {
+		out.Error(fmt.Sprintf("detached knowledge but failed to refresh session context: %v", err), ErrCodeInvalidOperation)
 		os.Exit(1)
 	}
 
@@ -556,6 +572,7 @@ func handleKnowledgeDetach(profile string, args []string) {
 			"session_id":   inst.ID,
 			"session":      inst.Title,
 			"project_path": inst.ProjectPath,
+			"session_home": inst.SessionHome,
 			"attachment":   attachment,
 		},
 	)

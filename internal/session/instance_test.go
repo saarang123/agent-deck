@@ -1717,14 +1717,14 @@ func TestInstance_Fork_PathWithSpaces(t *testing.T) {
 		t.Fatalf("Fork() error = %v", err)
 	}
 
-	// The cd command should have quoted path
-	if !strings.Contains(cmd, `cd '/tmp/Test Path With Spaces'`) {
-		t.Errorf("Fork command should quote path with spaces using single quotes.\nGot: %s", cmd)
+	// The cd command should point at a managed session home and keep quoting intact.
+	if !strings.Contains(cmd, "cd '") || !strings.Contains(cmd, "/.agent-deck/sessions/forked-session-") || !strings.Contains(cmd, "' &&") {
+		t.Errorf("Fork command should quote the managed session home using single quotes.\nGot: %s", cmd)
 	}
 
-	// Should NOT contain unquoted path that would break
-	if strings.Contains(cmd, "cd /tmp/Test Path With Spaces &&") {
-		t.Errorf("Fork command should not have unquoted path.\nGot: %s", cmd)
+	// The project path should still be granted via --add-dir since the cwd moved to SessionHome.
+	if !strings.Contains(cmd, "--add-dir /tmp/Test Path With Spaces") {
+		t.Errorf("Fork command should preserve access to the original project path.\nGot: %s", cmd)
 	}
 }
 

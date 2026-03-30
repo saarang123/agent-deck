@@ -4198,6 +4198,9 @@ func (h *Home) createSessionFromGlobalSearch(result *GlobalSearchResult) tea.Cmd
 
 		// Create instance
 		inst := session.NewInstanceWithGroupAndTool(title, projectPath, h.getCurrentGroupPath(), "claude")
+		if err := inst.EnsureManagedSessionHome(); err != nil {
+			return sessionCreatedMsg{err: fmt.Errorf("failed to create session home: %w", err)}
+		}
 		inst.ClaudeSessionID = result.SessionID
 
 		// Build resume command with config dir and permission flags
@@ -6462,6 +6465,9 @@ func (h *Home) createSessionInGroupWithWorktreeAndOptions(
 				inst.GetTmuxSession().WorkDir = inst.MultiRepoTempDir
 			}
 		}
+		if err := inst.EnsureManagedSessionHome(); err != nil {
+			return sessionCreatedMsg{err: fmt.Errorf("failed to create session home: %w", err)}
+		}
 
 		if len(knowledgeRefs) > 0 {
 			catalog, err := session.LoadKnowledgeCatalog("")
@@ -6469,10 +6475,15 @@ func (h *Home) createSessionInGroupWithWorktreeAndOptions(
 				return sessionCreatedMsg{err: fmt.Errorf("failed to load knowledge catalog: %w", err)}
 			}
 			for _, ref := range knowledgeRefs {
-				if _, err := session.AttachKnowledgeToProject(inst.ProjectPath, catalog, ref, session.KnowledgeAttachmentDoc); err != nil {
+				if _, err := session.AttachKnowledgeToProject(inst.EffectiveMetadataRoot(), catalog, ref, session.KnowledgeAttachmentDoc); err != nil {
 					return sessionCreatedMsg{err: fmt.Errorf("failed to attach knowledge %s: %w", ref, err)}
 				}
 			}
+			if err := session.RefreshManagedSessionFiles(inst, catalog); err != nil {
+				return sessionCreatedMsg{err: fmt.Errorf("failed to prepare session context: %w", err)}
+			}
+		} else if err := session.RefreshManagedSessionFiles(inst, nil); err != nil {
+			return sessionCreatedMsg{err: fmt.Errorf("failed to prepare session context: %w", err)}
 		}
 
 		uiLog.Info("session_create_starting",

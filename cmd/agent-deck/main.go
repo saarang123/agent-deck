@@ -1125,6 +1125,10 @@ func handleAdd(profile string, args []string) {
 	} else {
 		newInstance = session.NewInstance(sessionTitle, path)
 	}
+	if err := newInstance.EnsureManagedSessionHome(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: failed to create session home: %v\n", err)
+		os.Exit(1)
+	}
 
 	// Set parent if specified (includes parent's project path for --add-dir access)
 	if parentInstance != nil {

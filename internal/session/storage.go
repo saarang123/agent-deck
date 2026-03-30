@@ -39,6 +39,7 @@ type InstanceData struct {
 	ID              string    `json:"id"`
 	Title           string    `json:"title"`
 	ProjectPath     string    `json:"project_path"`
+	SessionHome     string    `json:"session_home,omitempty"`
 	GroupPath       string    `json:"group_path"`
 	Order           int       `json:"order"`
 	ParentSessionID string    `json:"parent_session_id,omitempty"` // Links to parent session (sub-session support)
@@ -304,6 +305,7 @@ func (s *Storage) SaveWithGroups(instances []*Instance, groupTree *GroupTree) er
 			ID:              inst.ID,
 			Title:           inst.Title,
 			ProjectPath:     inst.ProjectPath,
+			SessionHome:     inst.SessionHome,
 			GroupPath:       inst.GroupPath,
 			Order:           inst.Order,
 			Command:         inst.Command,
@@ -448,6 +450,7 @@ func (s *Storage) LoadLite() ([]*InstanceData, []*GroupData, error) {
 			ID:                 r.ID,
 			Title:              r.Title,
 			ProjectPath:        r.ProjectPath,
+			SessionHome:        r.SessionHome,
 			GroupPath:          r.GroupPath,
 			Order:              r.Order,
 			ParentSessionID:    r.ParentSessionID,
@@ -544,6 +547,7 @@ func (s *Storage) LoadWithGroups() ([]*Instance, []*GroupData, error) {
 			ID:                 r.ID,
 			Title:              r.Title,
 			ProjectPath:        r.ProjectPath,
+			SessionHome:        r.SessionHome,
 			GroupPath:          r.GroupPath,
 			Order:              r.Order,
 			ParentSessionID:    r.ParentSessionID,
@@ -709,6 +713,9 @@ func (s *Storage) convertToInstances(data *StorageData) ([]*Instance, []*GroupDa
 	// Convert to instances
 	instances := make([]*Instance, len(data.Instances))
 	for i, instData := range data.Instances {
+		projectPath := ExpandPath(fixMalformedTildePath(instData.ProjectPath))
+		sessionHome := ExpandPath(fixMalformedTildePath(instData.SessionHome))
+
 		// PERFORMANCE: Use lazy reconnect to defer tmux configuration until first attach
 		// This reduces TUI startup from ~6s to ~2s by avoiding subprocess overhead.
 		// Configuration (EnableMouseMode, ConfigureStatusBar) runs
@@ -718,10 +725,16 @@ func (s *Storage) convertToInstances(data *StorageData) ([]*Instance, []*GroupDa
 			// Convert Status enum to string for tmux package
 			// This restores the exact status across app restarts
 			previousStatus := statusToString(instData.Status)
+			workDir := projectPath
+			if instData.MultiRepoEnabled && instData.MultiRepoTempDir != "" {
+				workDir = instData.MultiRepoTempDir
+			} else if sessionHome != "" {
+				workDir = sessionHome
+			}
 			tmuxSess = tmux.ReconnectSessionLazy(
 				instData.TmuxSession,
 				instData.Title,
-				instData.ProjectPath,
+				workDir,
 				instData.Command,
 				previousStatus,
 			)
@@ -738,15 +751,15 @@ func (s *Storage) convertToInstances(data *StorageData) ([]*Instance, []*GroupDa
 			groupPath = extractGroupPath(instData.ProjectPath)
 		}
 
-		// Expand tilde in project path (handles paths like ~/project saved from UI)
+		// Expand tilde in project paths (handles paths like ~/project saved from UI).
 		// fixMalformedTildePath handles the case where the textinput suggestion
 		// appended instead of replacing, producing "/some/path~/actual/path".
-		projectPath := ExpandPath(fixMalformedTildePath(instData.ProjectPath))
 
 		inst := &Instance{
 			ID:                 instData.ID,
 			Title:              instData.Title,
 			ProjectPath:        projectPath,
+			SessionHome:        sessionHome,
 			GroupPath:          groupPath,
 			Order:              instData.Order,
 			ParentSessionID:    instData.ParentSessionID,

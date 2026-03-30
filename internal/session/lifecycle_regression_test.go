@@ -53,8 +53,10 @@ func TestLifecycle_StoppedRestartedRunningError(t *testing.T) {
 
 phase2:
 	// Phase 2: starting -> idle/running (UpdateStatus after grace period)
-	time.Sleep(2 * time.Second) // past 1.5s grace
-	require.NoError(t, inst.UpdateStatus())
+	require.Eventually(t, func() bool {
+		require.NoError(t, inst.UpdateStatus())
+		return inst.GetStatusThreadSafe() != StatusStarting
+	}, 5*time.Second, 200*time.Millisecond)
 	s := inst.GetStatusThreadSafe()
 	assert.NotEqual(t, StatusStarting, s, "should move past starting after grace")
 	assert.NotEqual(t, StatusError, s, "should not be error while tmux exists")

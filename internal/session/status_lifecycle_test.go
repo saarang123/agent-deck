@@ -32,11 +32,12 @@ func TestStatusCycle_ShellSessionWithCommand(t *testing.T) {
 	// After Start with command: should be StatusStarting
 	assert.Equal(t, StatusStarting, inst.Status, "after Start() with command, status should be starting")
 
-	// Wait past the 1.5s grace period
-	time.Sleep(2 * time.Second)
-
-	err = inst.UpdateStatus()
-	require.NoError(t, err, "UpdateStatus() should succeed")
+	// Wait past the 1.5s grace period and give tmux time to settle on slower systems.
+	require.Eventually(t, func() bool {
+		err = inst.UpdateStatus()
+		require.NoError(t, err, "UpdateStatus() should succeed")
+		return inst.Status != StatusStarting
+	}, 5*time.Second, 200*time.Millisecond)
 
 	// After grace period, status should NOT be starting
 	assert.NotEqual(t, StatusStarting, inst.Status, "after grace period, status should not be starting")

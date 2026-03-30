@@ -19,6 +19,7 @@ type jsonInstanceData struct {
 	ID              string    `json:"id"`
 	Title           string    `json:"title"`
 	ProjectPath     string    `json:"project_path"`
+	SessionHome     string    `json:"session_home,omitempty"`
 	GroupPath       string    `json:"group_path"`
 	Order           int       `json:"order"`
 	ParentSessionID string    `json:"parent_session_id,omitempty"`
@@ -152,6 +153,7 @@ func MigrateFromJSON(jsonPath string, db *StateDB) (int, int, error) {
 			ID:              inst.ID,
 			Title:           inst.Title,
 			ProjectPath:     inst.ProjectPath,
+			SessionHome:     inst.SessionHome,
 			GroupPath:       inst.GroupPath,
 			Order:           inst.Order,
 			Command:         inst.Command,

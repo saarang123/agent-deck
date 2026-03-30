@@ -260,6 +260,10 @@ func handleLaunch(profile string, args []string) {
 	} else {
 		newInstance = session.NewInstance(sessionTitle, path)
 	}
+	if err := newInstance.EnsureManagedSessionHome(); err != nil {
+		out.Error(fmt.Sprintf("failed to create session home: %v", err), ErrCodeInvalidOperation)
+		os.Exit(1)
+	}
 
 	if parentInstance != nil {
 		newInstance.SetParentWithPath(parentInstance.ID, parentInstance.ProjectPath)

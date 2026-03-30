@@ -37,6 +37,10 @@ func TestEffectiveWorkingDir(t *testing.T) {
 	inst := &Instance{ProjectPath: "/path/to/project"}
 	assert.Equal(t, "/path/to/project", inst.EffectiveWorkingDir())
 
+	// Managed session home: returns SessionHome
+	inst.SessionHome = "/tmp/agent-deck/sessions/test-12345678"
+	assert.Equal(t, "/tmp/agent-deck/sessions/test-12345678", inst.EffectiveWorkingDir())
+
 	// Multi-repo with temp dir: returns temp dir
 	inst.MultiRepoEnabled = true
 	inst.MultiRepoTempDir = "/tmp/agent-deck-sessions/abc123"
@@ -44,6 +48,7 @@ func TestEffectiveWorkingDir(t *testing.T) {
 
 	// Multi-repo without temp dir: falls back to ProjectPath
 	inst.MultiRepoTempDir = ""
+	inst.SessionHome = ""
 	assert.Equal(t, "/path/to/project", inst.EffectiveWorkingDir())
 }
 
