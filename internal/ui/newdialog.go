@@ -988,6 +988,16 @@ func (d *NewDialog) Update(msg tea.Msg) (*NewDialog, tea.Cmd) {
 				d.suggestionNavigated = true
 				return d, nil
 			}
+			if cur == focusKnowledge && d.knowledgeDocCount() > 0 {
+				d.jumpKnowledgePage(-1)
+				return d, nil
+			}
+
+		case "ctrl+d", "pgdown":
+			if cur == focusKnowledge && d.knowledgeDocCount() > 0 {
+				d.jumpKnowledgePage(1)
+				return d, nil
+			}
 
 		case "down":
 			if cur == focusKnowledge && d.knowledgeDocCount() > 0 {
@@ -1066,6 +1076,10 @@ func (d *NewDialog) Update(msg tea.Msg) (*NewDialog, tea.Cmd) {
 			return d, nil
 
 		case "left":
+			if cur == focusKnowledge && d.knowledgeDocCount() > 0 {
+				d.jumpKnowledgeCategory(-1)
+				return d, nil
+			}
 			if cur == focusCommand {
 				d.commandCursor--
 				if d.commandCursor < 0 {
@@ -1080,6 +1094,10 @@ func (d *NewDialog) Update(msg tea.Msg) (*NewDialog, tea.Cmd) {
 			}
 
 		case "right":
+			if cur == focusKnowledge && d.knowledgeDocCount() > 0 {
+				d.jumpKnowledgeCategory(1)
+				return d, nil
+			}
 			if cur == focusCommand {
 				d.commandCursor = (d.commandCursor + 1) % len(d.presetCommands)
 				d.updateToolOptions()
@@ -1788,7 +1806,7 @@ func (d *NewDialog) View() string {
 			helpText = "←→ command │ w worktree │ s sandbox │ Tab next │ Enter create │ Esc cancel"
 		}
 	} else if cur == focusKnowledge {
-		helpText = "↑↓ choose KB │ Space toggle │ Tab next │ Enter create │ Esc cancel"
+		helpText = "↑↓ choose │ ←→ category │ ^U/^D page │ Space toggle │ Tab next"
 	} else if cur == focusWorktree || cur == focusSandbox {
 		helpText = "Space toggle │ ↑↓ navigate │ Enter create │ Esc cancel"
 	} else if cur == focusInherited {
@@ -1988,5 +2006,64 @@ func (d *NewDialog) knowledgeVisibleDocLimit() int {
 		return 4
 	default:
 		return limit
+	}
+}
+
+func (d *NewDialog) jumpKnowledgePage(direction int) {
+	total := d.knowledgeDocCount()
+	if total == 0 {
+		return
+	}
+	step := d.knowledgeVisibleDocLimit()
+	if step < 1 {
+		step = 1
+	}
+	next := d.knowledgeCursor + (direction * step)
+	if next < 0 {
+		next = 0
+	}
+	if next >= total {
+		next = total - 1
+	}
+	d.knowledgeCursor = next
+}
+
+func (d *NewDialog) jumpKnowledgeCategory(direction int) {
+	total := d.knowledgeDocCount()
+	if total == 0 {
+		return
+	}
+	current := d.knowledgeCursor
+	start := 0
+	for i, category := range d.knowledgeCategories {
+		end := start + len(category.Docs)
+		if current >= start && current < end {
+			target := i + direction
+			if target < 0 {
+				target = 0
+			}
+			if target >= len(d.knowledgeCategories) {
+				target = len(d.knowledgeCategories) - 1
+			}
+			if target == i {
+				return
+			}
+			offset := current - start
+			targetStart := 0
+			for idx := 0; idx < target; idx++ {
+				targetStart += len(d.knowledgeCategories[idx].Docs)
+			}
+			targetLen := len(d.knowledgeCategories[target].Docs)
+			if targetLen == 0 {
+				d.knowledgeCursor = targetStart
+				return
+			}
+			if offset >= targetLen {
+				offset = targetLen - 1
+			}
+			d.knowledgeCursor = targetStart + offset
+			return
+		}
+		start = end
 	}
 }

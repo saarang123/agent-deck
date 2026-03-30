@@ -233,6 +233,87 @@ Skill %d docs.
 	}
 }
 
+func TestNewDialog_KnowledgeFastNavigation(t *testing.T) {
+	root := t.TempDir()
+	writeDialogTestFile(t, root+"/config.yaml", `
+categories:
+  skills: {}
+  repos: {}
+`)
+	writeDialogTestFile(t, root+"/skills/config.yaml", `
+entries:
+  - id: skill.1
+    file: one.md
+  - id: skill.2
+    file: two.md
+  - id: skill.3
+    file: three.md
+`)
+	writeDialogTestFile(t, root+"/repos/config.yaml", `
+entries:
+  - id: repo.1
+    file: one.md
+  - id: repo.2
+    file: two.md
+  - id: repo.3
+    file: three.md
+`)
+	for _, spec := range []struct {
+		path string
+		id   string
+		name string
+		kind string
+	}{
+		{root + "/skills/one.md", "skill.1", "Skill 1", "skill"},
+		{root + "/skills/two.md", "skill.2", "Skill 2", "skill"},
+		{root + "/skills/three.md", "skill.3", "Skill 3", "skill"},
+		{root + "/repos/one.md", "repo.1", "Repo 1", "repo"},
+		{root + "/repos/two.md", "repo.2", "Repo 2", "repo"},
+		{root + "/repos/three.md", "repo.3", "Repo 3", "repo"},
+	} {
+		writeDialogTestFile(t, spec.path, fmt.Sprintf(`-----
+id: %s
+name: %s
+kind: %s
+-----
+
+Doc.
+`, spec.id, spec.name, spec.kind))
+	}
+	t.Setenv("AGENTDECK_KNOWLEDGE_ROOT", root)
+
+	d := NewNewDialog()
+	d.SetSize(100, 40)
+	d.ShowInGroup("default", "default", t.TempDir())
+
+	idx := d.indexOf(focusKnowledge)
+	if idx < 0 {
+		t.Fatal("expected knowledge section to be focusable")
+	}
+	d.focusIndex = idx
+	d.updateFocus()
+
+	d, _ = d.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	if d.knowledgeCursor != 5 {
+		t.Fatalf("knowledgeCursor after ctrl+d = %d, want 5", d.knowledgeCursor)
+	}
+
+	d, _ = d.Update(tea.KeyMsg{Type: tea.KeyCtrlP})
+	if d.knowledgeCursor != 0 {
+		t.Fatalf("knowledgeCursor after ctrl+p page jump = %d, want 0", d.knowledgeCursor)
+	}
+
+	d, _ = d.Update(tea.KeyMsg{Type: tea.KeyRight})
+	if d.knowledgeCursor != 3 {
+		t.Fatalf("knowledgeCursor after right category jump = %d, want 3", d.knowledgeCursor)
+	}
+
+	d, _ = d.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	if d.knowledgeCursor != 0 {
+		t.Fatalf("knowledgeCursor after left category jump = %d, want 0", d.knowledgeCursor)
+	}
+}
+
 func TestNewDialog_SetPathSuggestions(t *testing.T) {
 	d := NewNewDialog()
 
