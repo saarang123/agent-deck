@@ -30,6 +30,8 @@ func handleKnowledge(profile string, args []string) {
 		handleKnowledgeAttach(profile, args[1:])
 	case "detach":
 		handleKnowledgeDetach(profile, args[1:])
+	case "root":
+		handleKnowledgeRoot(args[1:])
 	case "bundle":
 		handleKnowledgeBundle(args[1:])
 	case "help", "-h", "--help":
@@ -50,6 +52,9 @@ func printKnowledgeHelp() {
 	fmt.Println("  list                    List knowledge docs from the configured KB root")
 	fmt.Println("  show <doc>              Show one knowledge doc and its content")
 	fmt.Println("  search <query>          Search knowledge docs")
+	fmt.Println("  root show               Show the configured knowledge root")
+	fmt.Println("  root set <path>         Set the configured knowledge root")
+	fmt.Println("  root unset              Clear the configured knowledge root")
 	fmt.Println("  bundle list             List knowledge bundles")
 	fmt.Println("  bundle show <bundle>    Show one knowledge bundle and its docs")
 	fmt.Println("  attached [id]           Show knowledge attached to a session project")
@@ -63,10 +68,152 @@ func printKnowledgeHelp() {
 	fmt.Println()
 	fmt.Println("Examples:")
 	fmt.Println("  agent-deck knowledge list")
+	fmt.Println("  agent-deck knowledge root show")
+	fmt.Println("  agent-deck knowledge root set ~/Documents/knowledge")
 	fmt.Println("  agent-deck knowledge search auth")
 	fmt.Println("  agent-deck knowledge bundle list")
 	fmt.Println("  agent-deck knowledge attach my-project repo.backend")
 	fmt.Println("  agent-deck knowledge attach my-project default-onboarding")
+}
+
+func handleKnowledgeRoot(args []string) {
+	if len(args) == 0 {
+		printKnowledgeRootHelp()
+		os.Exit(1)
+	}
+
+	switch args[0] {
+	case "show":
+		handleKnowledgeRootShow(args[1:])
+	case "set":
+		handleKnowledgeRootSet(args[1:])
+	case "unset", "clear":
+		handleKnowledgeRootUnset(args[1:])
+	case "help", "-h", "--help":
+		printKnowledgeRootHelp()
+	default:
+		fmt.Fprintf(os.Stderr, "Error: unknown knowledge root command %q\n", args[0])
+		printKnowledgeRootHelp()
+		os.Exit(1)
+	}
+}
+
+func printKnowledgeRootHelp() {
+	fmt.Println("Usage: agent-deck knowledge root <command> [options]")
+	fmt.Println()
+	fmt.Println("Manage the configured knowledge root in ~/.agent-deck/config.toml.")
+	fmt.Println()
+	fmt.Println("Commands:")
+	fmt.Println("  show         Show the configured knowledge root and effective resolved root")
+	fmt.Println("  set <path>   Set the configured knowledge root")
+	fmt.Println("  unset        Clear the configured knowledge root")
+}
+
+func handleKnowledgeRootShow(args []string) {
+	fs := flag.NewFlagSet("knowledge root show", flag.ExitOnError)
+	jsonOutput := fs.Bool("json", false, "Output as JSON")
+	if err := fs.Parse(normalizeArgs(fs, args)); err != nil {
+		os.Exit(1)
+	}
+
+	out := NewCLIOutput(*jsonOutput, false)
+	cfg, err := session.LoadUserConfig()
+	if err != nil {
+		out.Error(fmt.Sprintf("failed to load config: %v", err), ErrCodeInvalidOperation)
+		os.Exit(1)
+	}
+
+	configured := strings.TrimSpace(cfg.Knowledge.Root)
+	resolved, resolveErr := session.ResolveKnowledgeRoot("")
+
+	if *jsonOutput {
+		payload := map[string]interface{}{
+			"configured_root": configured,
+		}
+		if resolveErr == nil {
+			payload["effective_root"] = resolved
+		} else {
+			payload["resolve_error"] = resolveErr.Error()
+		}
+		out.Print("", payload)
+		return
+	}
+
+	if configured == "" {
+		fmt.Println("Configured root: (not set)")
+	} else {
+		fmt.Printf("Configured root: %s\n", FormatPath(configured))
+	}
+	if resolveErr == nil {
+		fmt.Printf("Effective root:  %s\n", FormatPath(resolved))
+	} else {
+		fmt.Printf("Effective root:  unresolved (%v)\n", resolveErr)
+	}
+}
+
+func handleKnowledgeRootSet(args []string) {
+	fs := flag.NewFlagSet("knowledge root set", flag.ExitOnError)
+	jsonOutput := fs.Bool("json", false, "Output as JSON")
+	if err := fs.Parse(normalizeArgs(fs, args)); err != nil {
+		os.Exit(1)
+	}
+	if fs.NArg() < 1 {
+		printKnowledgeRootHelp()
+		os.Exit(1)
+	}
+
+	out := NewCLIOutput(*jsonOutput, false)
+	root, err := session.ResolveKnowledgeRoot(fs.Arg(0))
+	if err != nil {
+		out.Error(formatKnowledgeRootError(err), ErrCodeInvalidOperation)
+		os.Exit(1)
+	}
+
+	cfg, err := session.LoadUserConfig()
+	if err != nil {
+		out.Error(fmt.Sprintf("failed to load config: %v", err), ErrCodeInvalidOperation)
+		os.Exit(1)
+	}
+	cfg.Knowledge.Root = root
+	if err := session.SaveUserConfig(cfg); err != nil {
+		out.Error(fmt.Sprintf("failed to save config: %v", err), ErrCodeInvalidOperation)
+		os.Exit(1)
+	}
+
+	out.Success(
+		fmt.Sprintf("Set knowledge root to %s", FormatPath(root)),
+		map[string]interface{}{
+			"configured_root": root,
+		},
+	)
+}
+
+func handleKnowledgeRootUnset(args []string) {
+	fs := flag.NewFlagSet("knowledge root unset", flag.ExitOnError)
+	jsonOutput := fs.Bool("json", false, "Output as JSON")
+	if err := fs.Parse(normalizeArgs(fs, args)); err != nil {
+		os.Exit(1)
+	}
+
+	out := NewCLIOutput(*jsonOutput, false)
+	cfg, err := session.LoadUserConfig()
+	if err != nil {
+		out.Error(fmt.Sprintf("failed to load config: %v", err), ErrCodeInvalidOperation)
+		os.Exit(1)
+	}
+
+	cfg.Knowledge.Root = ""
+	if err := session.SaveUserConfig(cfg); err != nil {
+		out.Error(fmt.Sprintf("failed to save config: %v", err), ErrCodeInvalidOperation)
+		os.Exit(1)
+	}
+
+	out.Success(
+		"Cleared knowledge root",
+		map[string]interface{}{
+			"configured_root": "",
+		},
+	)
 }
 
 func handleKnowledgeList(args []string) {
