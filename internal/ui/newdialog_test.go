@@ -920,12 +920,9 @@ func TestNewDialog_ShowInGroup_EmptyDefaultPath(t *testing.T) {
 
 	dialog.ShowInGroup("projects", "Projects", "")
 
-	// With empty default path, it should fall back to current working directory
-	// We can't test the exact value, but we can verify it's not empty
-	// (assuming we're not in a system temp directory)
 	value := dialog.pathInput.Value()
-	if value == "" {
-		t.Error("pathInput should not be empty when defaultPath is empty (should use cwd)")
+	if value != "" {
+		t.Errorf("pathInput should be empty when defaultPath is empty, got: %q", value)
 	}
 }
 
@@ -1272,19 +1269,18 @@ func TestNewDialog_SoftSelect_InitialState(t *testing.T) {
 	d.SetSize(80, 40)
 	d.Show()
 
-	// After Show(), path is pre-filled and soft-selected
-	if !d.pathSoftSelected {
-		t.Error("pathSoftSelected should be true after Show()")
+	if d.pathSoftSelected {
+		t.Error("pathSoftSelected should be false when path starts empty")
 	}
-	if d.pathInput.Value() == "" {
-		t.Error("path should be pre-filled with CWD after Show()")
+	if d.pathInput.Value() != "" {
+		t.Errorf("path should start empty after Show(), got %q", d.pathInput.Value())
 	}
 }
 
 func TestNewDialog_SoftSelect_TypeClearsField(t *testing.T) {
 	d := NewNewDialog()
 	d.SetSize(80, 40)
-	d.Show()
+	d.ShowInGroup("default", "default", "/tmp/prefilled")
 
 	// Move focus to path field
 	d.focusIndex = 2
@@ -1314,7 +1310,7 @@ func TestNewDialog_SoftSelect_TypeClearsField(t *testing.T) {
 func TestNewDialog_SoftSelect_BackspaceClearsField(t *testing.T) {
 	d := NewNewDialog()
 	d.SetSize(80, 40)
-	d.Show()
+	d.ShowInGroup("default", "default", "/tmp/prefilled")
 
 	d.focusIndex = 2
 	d.updateFocus()
@@ -1337,7 +1333,7 @@ func TestNewDialog_SoftSelect_BackspaceClearsField(t *testing.T) {
 func TestNewDialog_SoftSelect_MovementExits(t *testing.T) {
 	d := NewNewDialog()
 	d.SetSize(80, 40)
-	d.Show()
+	d.ShowInGroup("default", "default", "/tmp/prefilled")
 
 	d.focusIndex = 2
 	d.updateFocus()
@@ -1362,7 +1358,7 @@ func TestNewDialog_SoftSelect_MovementExits(t *testing.T) {
 func TestNewDialog_SoftSelect_TabPreservesValue(t *testing.T) {
 	d := NewNewDialog()
 	d.SetSize(80, 40)
-	d.Show()
+	d.ShowInGroup("default", "default", "/tmp/prefilled")
 
 	d.focusIndex = 2
 	d.updateFocus()
@@ -1388,7 +1384,7 @@ func TestNewDialog_SoftSelect_TabPreservesValue(t *testing.T) {
 func TestNewDialog_SoftSelect_CtrlNExits(t *testing.T) {
 	d := NewNewDialog()
 	d.SetSize(80, 40)
-	d.Show()
+	d.ShowInGroup("default", "default", "/tmp/prefilled")
 
 	suggestions := []string{"/path/one", "/path/two"}
 	d.SetPathSuggestions(suggestions)

@@ -170,12 +170,6 @@ func NewNewDialog() *NewDialog {
 	pathInput.Width = 40
 	pathInput.ShowSuggestions = false // we use our own dropdown with filtering
 
-	// Get current working directory for default path
-	cwd, err := os.Getwd()
-	if err == nil {
-		pathInput.SetValue(cwd)
-	}
-
 	// Create command input
 	commandInput := textinput.New()
 	commandInput.Placeholder = "custom command"
@@ -246,16 +240,13 @@ func (d *NewDialog) ShowInGroup(groupPath, groupName, defaultPath string) {
 	d.sandboxEnabled = false
 	d.inheritedExpanded = false
 	d.inheritedSettings = nil
-	// Set path input to group's default path if provided, otherwise use current working directory.
+	// Set path input to group's default path if provided; otherwise leave it blank.
 	if defaultPath != "" {
 		d.pathInput.SetValue(defaultPath)
 	} else {
-		cwd, err := os.Getwd()
-		if err == nil {
-			d.pathInput.SetValue(cwd)
-		}
+		d.pathInput.SetValue("")
 	}
-	d.pathSoftSelected = true // activate soft-select for pre-filled path.
+	d.pathSoftSelected = d.pathInput.Value() != "" // activate soft-select only for pre-filled path.
 	// Initialize tool options from global config.
 	d.geminiOptions.SetDefaults(false)
 	d.codexOptions.SetDefaults(false)
