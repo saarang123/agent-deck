@@ -664,11 +664,6 @@ func (d *NewDialog) Validate() string {
 		return fmt.Sprintf("Session name too long (max %d characters)", MaxNameLength)
 	}
 
-	// Check for empty path
-	if path == "" && !d.multiRepoEnabled {
-		return "Project path cannot be empty"
-	}
-
 	// Validate multi-repo paths
 	if d.multiRepoEnabled {
 		nonEmpty := 0
@@ -692,6 +687,9 @@ func (d *NewDialog) Validate() string {
 
 	// Validate worktree branch if enabled
 	if d.worktreeEnabled {
+		if path == "" {
+			return "Project path required for worktree"
+		}
 		branch := strings.TrimSpace(d.branchInput.Value())
 		if branch == "" {
 			return "Branch name required for worktree"
@@ -732,24 +730,38 @@ func (d *NewDialog) indexOf(target focusTarget) int {
 	return -1
 }
 
+func (d *NewDialog) moveFocus(delta int) {
+	if len(d.focusTargets) == 0 {
+		d.focusIndex = 0
+		return
+	}
+	next := d.focusIndex + delta
+	for next < 0 {
+		next += len(d.focusTargets)
+	}
+	next %= len(d.focusTargets)
+	d.focusIndex = next
+	if d.currentTarget() == focusKnowledge {
+		d.knowledgeCursor = 0
+	}
+	d.updateFocus()
+}
+
 // rebuildFocusTargets builds the ordered list of active focusable elements
 // based on current dialog state (sandbox, worktree, tool options visibility).
 func (d *NewDialog) rebuildFocusTargets() {
 	var targets []focusTarget
 	if d.multiRepoEnabled {
 		// Multi-repo replaces the single path field with a path list under focusMultiRepo
-		targets = []focusTarget{focusName, focusMultiRepo, focusCommand, focusWorktree, focusSandbox}
+		targets = []focusTarget{focusName, focusMultiRepo, focusCommand, focusSandbox}
 	} else {
-		targets = []focusTarget{focusName, focusMultiRepo, focusPath, focusCommand, focusWorktree, focusSandbox}
+		targets = []focusTarget{focusName, focusMultiRepo, focusPath, focusCommand, focusSandbox}
 	}
 	if d.knowledgeDocCount() > 0 {
 		targets = append(targets, focusKnowledge)
 	}
 	if d.sandboxEnabled && len(d.inheritedSettings) > 0 {
 		targets = append(targets, focusInherited)
-	}
-	if d.worktreeEnabled {
-		targets = append(targets, focusBranch)
 	}
 	if d.toolOptions != nil {
 		targets = append(targets, focusOptions)
@@ -808,7 +820,7 @@ func (d *NewDialog) updateFocus() {
 		}
 	case focusKnowledge:
 		// List focus only.
-	case focusWorktree, focusSandbox, focusInherited:
+	case focusSandbox, focusInherited:
 		// Checkbox/toggle rows — no text input to focus.
 	case focusBranch:
 		d.branchInput.Focus()
@@ -951,15 +963,10 @@ func (d *NewDialog) Update(msg tea.Msg) (*NewDialog, tea.Cmd) {
 				return d, nil
 			}
 			// Move to next field.
-			if d.focusIndex < maxIdx {
-				d.focusIndex++
-				d.updateFocus()
-			} else if cur == focusOptions && d.toolOptions != nil {
+			if cur == focusOptions && d.toolOptions != nil && d.focusIndex == maxIdx {
 				return d, d.toolOptions.Update(msg)
-			} else {
-				d.focusIndex = 0
-				d.updateFocus()
 			}
+			d.moveFocus(1)
 			// Reset navigation flag when leaving path field.
 			if d.currentTarget() != focusPath {
 				d.suggestionNavigated = false
@@ -1001,7 +1008,11 @@ func (d *NewDialog) Update(msg tea.Msg) (*NewDialog, tea.Cmd) {
 
 		case "down":
 			if cur == focusKnowledge && d.knowledgeDocCount() > 0 {
-				d.knowledgeCursor = (d.knowledgeCursor + 1) % d.knowledgeDocCount()
+				if d.knowledgeCursor < d.knowledgeDocCount()-1 {
+					d.knowledgeCursor++
+				} else {
+					d.moveFocus(1)
+				}
 				return d, nil
 			}
 			if cur == focusMultiRepo && d.multiRepoEnabled && !d.multiRepoEditing {
@@ -1011,8 +1022,7 @@ func (d *NewDialog) Update(msg tea.Msg) (*NewDialog, tea.Cmd) {
 				}
 			}
 			if d.focusIndex < maxIdx {
-				d.focusIndex++
-				d.updateFocus()
+				d.moveFocus(1)
 			} else if cur == focusOptions && d.toolOptions != nil {
 				return d, d.toolOptions.Update(msg)
 			}
@@ -1020,9 +1030,10 @@ func (d *NewDialog) Update(msg tea.Msg) (*NewDialog, tea.Cmd) {
 
 		case "shift+tab", "up":
 			if cur == focusKnowledge && d.knowledgeDocCount() > 0 {
-				d.knowledgeCursor--
-				if d.knowledgeCursor < 0 {
-					d.knowledgeCursor = d.knowledgeDocCount() - 1
+				if d.knowledgeCursor > 0 {
+					d.knowledgeCursor--
+				} else {
+					d.moveFocus(-1)
 				}
 				return d, nil
 			}
@@ -1035,11 +1046,7 @@ func (d *NewDialog) Update(msg tea.Msg) (*NewDialog, tea.Cmd) {
 			if cur == focusOptions && d.toolOptions != nil && !d.toolOptions.AtTop() {
 				return d, d.toolOptions.Update(msg)
 			}
-			d.focusIndex--
-			if d.focusIndex < 0 {
-				d.focusIndex = maxIdx
-			}
-			d.updateFocus()
+			d.moveFocus(-1)
 			return d, nil
 
 		case "esc":
@@ -1106,19 +1113,6 @@ func (d *NewDialog) Update(msg tea.Msg) (*NewDialog, tea.Cmd) {
 			}
 			if cur == focusOptions && d.toolOptions != nil {
 				return d, d.toolOptions.Update(msg)
-			}
-
-		case "w":
-			if cur == focusCommand && !d.isTextInputFocused() {
-				d.ToggleWorktree()
-				d.rebuildFocusTargets()
-				if d.worktreeEnabled {
-					if idx := d.indexOf(focusBranch); idx >= 0 {
-						d.focusIndex = idx
-					}
-					d.updateFocus()
-				}
-				return d, nil
 			}
 
 		case "s":
@@ -1194,17 +1188,6 @@ func (d *NewDialog) Update(msg tea.Msg) (*NewDialog, tea.Cmd) {
 			}
 
 		case " ":
-			if cur == focusWorktree {
-				d.ToggleWorktree()
-				d.rebuildFocusTargets()
-				if d.worktreeEnabled {
-					if idx := d.indexOf(focusBranch); idx >= 0 {
-						d.focusIndex = idx
-					}
-					d.updateFocus()
-				}
-				return d, nil
-			}
 			if cur == focusSandbox {
 				d.ToggleSandbox()
 				if !d.sandboxEnabled {
@@ -1265,7 +1248,7 @@ func (d *NewDialog) Update(msg tea.Msg) (*NewDialog, tea.Cmd) {
 				d.filterPathSuggestions()
 			}
 		}
-	case focusKnowledge, focusWorktree, focusSandbox, focusInherited:
+	case focusKnowledge, focusSandbox, focusInherited:
 		// Checkbox/toggle rows — no text input to update.
 	case focusBranch:
 		oldBranch := d.branchInput.Value()
@@ -1706,13 +1689,6 @@ func (d *NewDialog) View() string {
 		}
 	}
 
-	// Worktree checkbox — individually focusable.
-	worktreeLabel := "Create in worktree"
-	if cur == focusCommand {
-		worktreeLabel = "Create in worktree (w)"
-	}
-	content.WriteString(renderCheckboxLine(worktreeLabel, d.worktreeEnabled, cur == focusWorktree))
-
 	// Docker sandbox checkbox — individually focusable.
 	sandboxLabel := "Run in Docker sandbox"
 	if cur == focusCommand {
@@ -1754,20 +1730,6 @@ func (d *NewDialog) View() string {
 		content.WriteString("\n")
 	}
 
-	// Branch input (only visible when worktree is enabled).
-	if d.worktreeEnabled {
-		content.WriteString("\n")
-		if cur == focusBranch {
-			content.WriteString(activeLabelStyle.Render("▶ Branch:"))
-		} else {
-			content.WriteString(labelStyle.Render("  Branch:"))
-		}
-		content.WriteString("\n")
-		content.WriteString("  ")
-		content.WriteString(d.branchInput.View())
-		content.WriteString("\n")
-	}
-
 	// Tool options panel
 	if d.toolOptions != nil {
 		content.WriteString("\n")
@@ -1801,13 +1763,13 @@ func (d *NewDialog) View() string {
 	} else if cur == focusCommand {
 		selectedCmd := d.GetSelectedCommand()
 		if selectedCmd == "gemini" || selectedCmd == "codex" {
-			helpText = "←→ command │ w worktree │ s sandbox │ y yolo │ Tab next │ Enter create │ Esc cancel"
+			helpText = "←→ command │ s sandbox │ y yolo │ Tab next │ Enter create │ Esc cancel"
 		} else {
-			helpText = "←→ command │ w worktree │ s sandbox │ Tab next │ Enter create │ Esc cancel"
+			helpText = "←→ command │ s sandbox │ Tab next │ Enter create │ Esc cancel"
 		}
 	} else if cur == focusKnowledge {
-		helpText = "↑↓ choose │ ←→ category │ ^U/^D page │ Space toggle │ Tab next"
-	} else if cur == focusWorktree || cur == focusSandbox {
+		helpText = "↑↓ choose/leave │ ←→ category │ ^U/^D page │ Space toggle │ Tab next"
+	} else if cur == focusSandbox {
 		helpText = "Space toggle │ ↑↓ navigate │ Enter create │ Esc cancel"
 	} else if cur == focusInherited {
 		helpText = "Space expand/collapse │ ↑↓ navigate │ Enter create │ Esc cancel"

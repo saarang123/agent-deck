@@ -4320,8 +4320,9 @@ func (h *Home) handleNewDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			toolOptionsJSON, _ = session.MarshalToolOptions(codexOpts)
 		}
 
-		// Only non-worktree sessions may need interactive "create directory" confirmation.
-		if !worktreeEnabled {
+		// Only non-worktree sessions with an explicit path may need interactive
+		// "create directory" confirmation.
+		if !worktreeEnabled && strings.TrimSpace(path) != "" {
 			if _, err := os.Stat(path); os.IsNotExist(err) {
 				h.newDialog.Hide()
 				h.confirmDialog.ShowCreateDirectory(path, name, command, groupPath, toolOptionsJSON, knowledgeRefs)
@@ -6337,6 +6338,7 @@ func (h *Home) createSessionInGroupWithWorktreeAndOptions(
 			inst = session.NewInstanceWithTool(name, path, tool)
 		}
 		inst.Command = command
+		blankProjectPath := strings.TrimSpace(path) == ""
 
 		// Set worktree fields if provided
 		if worktreePath != "" {
@@ -6467,6 +6469,12 @@ func (h *Home) createSessionInGroupWithWorktreeAndOptions(
 		}
 		if err := inst.EnsureManagedSessionHome(); err != nil {
 			return sessionCreatedMsg{err: fmt.Errorf("failed to create session home: %w", err)}
+		}
+		if blankProjectPath {
+			inst.ProjectPath = inst.SessionHome
+			if inst.GetTmuxSession() != nil && inst.MultiRepoTempDir == "" {
+				inst.GetTmuxSession().WorkDir = inst.SessionHome
+			}
 		}
 
 		if len(knowledgeRefs) > 0 {
