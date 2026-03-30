@@ -1648,9 +1648,16 @@ func (d *NewDialog) View() string {
 		} else {
 			headerStyle := lipgloss.NewStyle().Foreground(ColorComment).Bold(true)
 			idStyle := lipgloss.NewStyle().Foreground(ColorTextDim)
+			dimStyle := lipgloss.NewStyle().Foreground(ColorComment)
 			selectedStyle := lipgloss.NewStyle().Foreground(ColorCyan).Bold(true)
-			row := 0
-			for _, category := range d.knowledgeCategories {
+			sections, hiddenAbove, hiddenBelow := d.visibleKnowledgeSections()
+			if hiddenAbove > 0 {
+				content.WriteString("  ")
+				content.WriteString(dimStyle.Render(fmt.Sprintf("↑ %d more docs above", hiddenAbove)))
+				content.WriteString("\n")
+			}
+			row := hiddenAbove
+			for _, category := range sections {
 				content.WriteString("  ")
 				content.WriteString(headerStyle.Render(formatKnowledgeCategoryName(category.Name)))
 				content.WriteString("\n")
@@ -1672,6 +1679,11 @@ func (d *NewDialog) View() string {
 					content.WriteString("\n")
 					row++
 				}
+			}
+			if hiddenBelow > 0 {
+				content.WriteString("  ")
+				content.WriteString(dimStyle.Render(fmt.Sprintf("↓ %d more docs below", hiddenBelow)))
+				content.WriteString("\n")
 			}
 		}
 	}
@@ -1912,4 +1924,69 @@ func formatKnowledgeCategoryName(category string) string {
 		words[i] = strings.Title(word)
 	}
 	return strings.Join(words, " ")
+}
+
+func (d *NewDialog) visibleKnowledgeSections() ([]knowledgeCategorySection, int, int) {
+	totalDocs := d.knowledgeDocCount()
+	if totalDocs == 0 {
+		return nil, 0, 0
+	}
+
+	maxDocs := d.knowledgeVisibleDocLimit()
+	if maxDocs >= totalDocs {
+		return d.knowledgeCategories, 0, 0
+	}
+
+	start := d.knowledgeCursor - (maxDocs / 2)
+	if start < 0 {
+		start = 0
+	}
+	end := start + maxDocs
+	if end > totalDocs {
+		end = totalDocs
+		start = end - maxDocs
+	}
+
+	sections := make([]knowledgeCategorySection, 0)
+	docIndex := 0
+	for _, category := range d.knowledgeCategories {
+		visibleDocs := make([]session.KnowledgeDoc, 0)
+		for _, doc := range category.Docs {
+			if docIndex >= start && docIndex < end {
+				visibleDocs = append(visibleDocs, doc)
+			}
+			docIndex++
+		}
+		if len(visibleDocs) == 0 {
+			continue
+		}
+		sections = append(sections, knowledgeCategorySection{
+			ID:   category.ID,
+			Name: category.Name,
+			Docs: visibleDocs,
+		})
+	}
+
+	return sections, start, totalDocs - end
+}
+
+func (d *NewDialog) knowledgeVisibleDocLimit() int {
+	limit := 6
+	if d.height <= 0 {
+		return limit
+	}
+
+	available := d.height - 28
+	switch {
+	case available >= 10:
+		return 10
+	case available >= 8:
+		return 8
+	case available >= 6:
+		return 6
+	case available >= 4:
+		return 4
+	default:
+		return limit
+	}
 }

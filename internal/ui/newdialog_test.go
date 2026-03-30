@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -186,6 +187,49 @@ Backend docs.
 	}
 	if !strings.Contains(view, "Skills") || !strings.Contains(view, "Repos") {
 		t.Fatal("view should group docs by category")
+	}
+}
+
+func TestNewDialog_KnowledgeViewWindowed(t *testing.T) {
+	root := t.TempDir()
+	writeDialogTestFile(t, root+"/config.yaml", `
+categories:
+  skills: {}
+`)
+	var skillConfig strings.Builder
+	skillConfig.WriteString("entries:\n")
+	for i := 1; i <= 9; i++ {
+		skillConfig.WriteString(fmt.Sprintf("  - id: skill.%d\n    file: skill-%d.md\n", i, i))
+		writeDialogTestFile(t, fmt.Sprintf("%s/skills/skill-%d.md", root, i), fmt.Sprintf(`-----
+id: skill.%d
+name: Skill %d
+kind: skill
+-----
+
+Skill %d docs.
+`, i, i, i))
+	}
+	writeDialogTestFile(t, root+"/skills/config.yaml", skillConfig.String())
+	t.Setenv("AGENTDECK_KNOWLEDGE_ROOT", root)
+
+	d := NewNewDialog()
+	d.SetSize(100, 32)
+	d.ShowInGroup("default", "default", t.TempDir())
+
+	idx := d.indexOf(focusKnowledge)
+	if idx < 0 {
+		t.Fatal("expected knowledge section to be focusable")
+	}
+	d.focusIndex = idx
+	d.knowledgeCursor = 4
+	d.updateFocus()
+
+	view := d.View()
+	if !strings.Contains(view, "↑ 2 more docs above") {
+		t.Fatal("view should show hidden docs above")
+	}
+	if !strings.Contains(view, "↓ 3 more docs below") {
+		t.Fatal("view should show hidden docs below")
 	}
 }
 
